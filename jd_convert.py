@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """京东联盟转链模块。
 
-接口：jd.union.open.promotion.common.get（网站/APP 获取推广链接）
-参数规范：{"promotionCodeReq": {"materialId": <商品链接/券链接/skuId>, "siteId": <网站或APP的ID>}}
+接口：jd.union.open.promotion.bysubunionid.get（导购媒体/推广位获取推广链接）
+参数规范：{"promotionCodeReq": {"materialId": <商品链接/券链接/skuId>, "unionId": <联盟ID>, "subUnionId": <自定义追踪串>, "positionId": <推广位ID>, "chainType": 3}}
 签名：secret + 各参数按字典序拼接 + secret，md5 后转大写
+
+适用应用类型：导购媒体（如微信群、微博、博客、个人站等渠道），不需要网站/APP类应用的siteId。
 """
 import hashlib
 import json
@@ -66,11 +68,15 @@ def convert_jd_link(material: str, cfg, cache) -> dict:
     if not jd.get("enabled"):
         result["msg"] = "转链未启用"
         return result
-    pj = {"promotionCodeReq": {"materialId": material, "siteId": str(jd.get("site_id", ""))}}
-    if jd.get("union_id"):
-        pj["promotionCodeReq"]["unionId"] = jd["union_id"]
+    req = {"promotionCodeReq": {
+        "materialId": material,
+        "unionId": jd.get("union_id", ""),
+        "subUnionId": jd.get("sub_union_id", ""),
+        "positionId": str(jd.get("position_id", "")),
+        "chainType": int(jd.get("chain_type", 3)),
+    }}
     try:
-        resp = call_api(jd["method"], pj, cfg)
+        resp = call_api(jd["method"], req, cfg)
         key = [k for k in resp if k.endswith("_responce")]
         body = resp[key[0]] if key else {}
         raw = body.get("getResult", "")

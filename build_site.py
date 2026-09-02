@@ -4,7 +4,7 @@
 流程：
 1. 抓取 haodanku 线报接口（JSON，无需登录）
 2. 归一化：平台 / 时间 / 文案行 / 商品链接 / 券链接 / 图片
-3. 京东链接走联盟转链（可关闭，关闭时用原链接）
+3. 京东链接走联盟「万能转链」（浏览器自动化，无 API 权限要求）
 4. 生成 site/index.html（数据内嵌，单文件可直接部署）+ site/deals.json
 """
 import json
@@ -12,7 +12,7 @@ import os
 import time
 import urllib.request
 
-import jd_convert
+import jd_convert_browser as jd_convert
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.join(BASE_DIR, "site")
@@ -88,6 +88,8 @@ main{{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,
 .copy{{flex:1;padding:7px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font-size:13px}}
 .note{{color:var(--sub);font-size:11px;margin-top:8px}}
 .converted{{color:var(--ok);font-size:11px}}
+.price{{color:var(--jd);font-weight:bold;font-size:18px;margin:4px 0}}
+.price small{{color:var(--sub);font-weight:normal;font-size:11px;text-decoration:line-through;margin-left:6px}}
 footer{{padding:20px;text-align:center;color:var(--sub);font-size:12px}}
 </style>
 </head>
@@ -116,22 +118,29 @@ function render(){{
     && (!kw || JSON.stringify(d).toLowerCase().includes(kw.toLowerCase())));
   document.getElementById('cnt').textContent = list.length;
   document.getElementById('list').innerHTML = list.map(d=>{{
-    const imgs = d.images.length? `<div class="imgs">${{d.images.slice(0,4).map(u=>`<img src="${{esc(u)}}" referrerpolicy="no-referrer">`).join('')}}</div>`:'';
+    const imgs = (d.images && d.images.length) ? `<div class="imgs">${{d.images.slice(0,4).map(u=>`<img src="${{esc(u)}}" referrerpolicy="no-referrer" loading="lazy">`).join('')}}</div>`:'';
+    // 优先用 _formatContext（万能转链给的完整文案），否则用原始 list 拼
+    const copyText = d._formatContext || (d.list.map(it=>it.content||it.url||it.coupon_url||'').filter(Boolean).join('\\n'));
     const lines = d.list.map(it=>{{
       if(it.item_id || it.coupon_url){{
         const href = it.url || it.coupon_url || it.item_id;
         const label = it.coupon_url ? '立即领券' : '抢购商品';
         const bcls = it.coupon_url ? 'btn coupon' : 'btn';
-        const mark = it.converted ? '<span class="converted">已转链</span>' : '';
+        const mark = it.converted ? '<span class="converted">✓已转链</span>' : '';
         return `<div class="line"><a class="${{bcls}}" href="${{esc(href)}}" target="_blank" rel="noopener">${{label}}</a> ${{mark}}</div>`;
       }}
       return `<div class="line">${{esc(it.content)}}</div>`;
     }}).join('');
-    const text = (d.cate||d.platform_name) + '\\n' + d.list.map(it=>it.content||it.url||it.coupon_url||'').filter(Boolean).join('\\n');
+    // 价格：京东的有 _couponAfterPrice
+    let priceHtml = '';
+    if (d._couponAfterPrice && d.platform === '2') {{
+      const old = d.price && d.price > d._couponAfterPrice ? `<small>¥${{d.price}}</small>` : '';
+      priceHtml = `<div class="price">到手 ¥${{d._couponAfterPrice}}${{old}}</div>`;
+    }}
     return `<div class="card">
       <div class="head"><span class="tag ${{cls(d.platform)}}">${{esc(d.platform_name)}}</span><span class="time">${{esc(d.time)}}</span></div>
-      ${{imgs}}${{lines}}
-      <div class="actions"><button class="copy" data-text="${{esc(text)}}">复制文案</button></div>
+      ${{imgs}}${{priceHtml}}${{lines}}
+      <div class="actions"><button class="copy" data-text="${{esc(copyText)}}">复制文案（含返利链接）</button></div>
     </div>`;
   }}).join('');
 }}
@@ -169,7 +178,11 @@ def main():
             print(f"[warn] 第{page}页抓取失败: {e}")
     print(f"抓取线报 {len(deals)} 条")
 
-    stats = jd_convert.convert_all(deals, cfg)
+    try:
+        deals, stats = jd_convert.convert_all_browser(deals, cfg)
+    except Exception as e:
+        print(f"[warn] 浏览器转链失败（{e}），原样保留链接")
+        stats = {"ok": 0, "fail": len(deals), "skipped": 0}
     print(f"转链结果: {stats}")
 
     with open(os.path.join(SITE_DIR, "deals.json"), "w", encoding="utf-8") as f:
