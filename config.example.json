@@ -1,0 +1,17 @@
+{
+  "jd": {
+    "app_key": "在此填写你的京东联盟appKey",
+    "app_secret": "在此填写你的京东联盟appSecret",
+    "site_id": "在此填写网站/APP类应用的siteId（导购媒体类应用无法通用转链）",
+    "union_id": "",
+    "enabled": true,
+    "note": "应用类型必须=网站 或 APP，通用转链接口(jd.union.open.promotion.common.get)才支持；导购媒体(微信/社群)类应用会返回2001701错误。",
+    "method": "jd.union.open.promotion.common.get",
+    "gateway": "https://api.jd.com/routerjson"
+  },
+  "crawl": {
+    "pages": 3,
+    "page_size": 20,
+    "source": "https://www.haodanku.com/HolidayActivity/wire_report"
+  }
+}

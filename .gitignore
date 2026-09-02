@@ -1,0 +1,16 @@
+# secrets / runtime
+config.json
+link_cache.json
+run.log
+
+# debug artifacts (scraped raw files from earlier probing)
+business.js
+comVueData.min.js
+new_header.min.js
+tip_off.html
+probe_params.py
+test_jd_api.py
+
+# python
+__pycache__/
+*.pyc
