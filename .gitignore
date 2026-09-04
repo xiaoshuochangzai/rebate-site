@@ -14,3 +14,4 @@ test_jd_api.py
 # python
 __pycache__/
 *.pyc
+gh_check.html
