@@ -189,7 +189,7 @@ render();
 """
 
 
-def main():
+def main(raw=False):
     with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
         cfg = json.load(f)
     os.makedirs(SITE_DIR, exist_ok=True)
@@ -224,40 +224,48 @@ def main():
         time.sleep(0.5)
     print(f"今日({today0}起)线报共 {len(deals)} 条")
 
-    # 增量进度回调：每转完一条落盘 deals.json；每20条或3分钟做一次 git 增量推送
-    import subprocess as _sp
+    # 抓完立刻落盘，防止后面转链挂掉把抓取成果也丢了
+    with open(os.path.join(SITE_DIR, "deals.json"), "w", encoding="utf-8") as f:
+        json.dump(deals, f, ensure_ascii=False, indent=1)
 
-    def _git(*args):
-        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-        _sp.run(["git", *args], cwd=BASE_DIR, capture_output=True, env=env)
+    if raw:
+        stats = {"ok": 0, "fail": 0, "skipped": 0}
+        print("[raw 模式] 跳过转链，直接展示原始线报")
+    else:
+        # 增量进度回调：每转完一条落盘 deals.json；每20条或3分钟做一次 git 增量推送
+        import subprocess as _sp
 
-    push_state = {"n": 0, "last": time.time()}
+        def _git(*args):
+            env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+            _sp.run(["git", *args], cwd=BASE_DIR, capture_output=True, env=env)
 
-    def on_progress(done_deals, stats):
-        try:
-            with open(os.path.join(SITE_DIR, "deals.json"), "w", encoding="utf-8") as f:
-                json.dump(done_deals, f, ensure_ascii=False, indent=1)
-        except Exception as e:
-            print(f"  [warn] 落盘失败: {e}")
-        push_state["n"] += 1
-        if push_state["n"] % 20 == 0 or time.time() - push_state["last"] > 180:
+        push_state = {"n": 0, "last": time.time()}
+
+        def on_progress(done_deals, stats):
             try:
-                html = build_html(done_deals, cfg, stats)
-                with open(os.path.join(SITE_DIR, "index.html"), "w", encoding="utf-8") as f:
-                    f.write(html)
-                _git("add", "-A")
-                _git("commit", "-m", "data: incremental update")
-                _git("push", "origin", "main")
-                push_state["last"] = time.time()
-                print("  [push] 增量部署完成")
+                with open(os.path.join(SITE_DIR, "deals.json"), "w", encoding="utf-8") as f:
+                    json.dump(done_deals, f, ensure_ascii=False, indent=1)
             except Exception as e:
-                print(f"  [warn] 增量推送失败: {e}")
+                print(f"  [warn] 落盘失败: {e}")
+            push_state["n"] += 1
+            if push_state["n"] % 20 == 0 or time.time() - push_state["last"] > 180:
+                try:
+                    html = build_html(done_deals, cfg, stats)
+                    with open(os.path.join(SITE_DIR, "index.html"), "w", encoding="utf-8") as f:
+                        f.write(html)
+                    _git("add", "-A")
+                    _git("commit", "-m", "data: incremental update")
+                    _git("push", "origin", "main")
+                    push_state["last"] = time.time()
+                    print("  [push] 增量部署完成")
+                except Exception as e:
+                    print(f"  [warn] 增量推送失败: {e}")
 
-    try:
-        deals, stats = jd_convert.convert_all_browser(deals, cfg, on_progress=on_progress)
-    except Exception as e:
-        print(f"[warn] 浏览器转链失败（{e}），原样保留链接")
-        stats = {"ok": 0, "fail": len(deals), "skipped": 0}
+        try:
+            deals, stats = jd_convert.convert_all_browser(deals, cfg, on_progress=on_progress)
+        except Exception as e:
+            print(f"[warn] 浏览器转链失败（{e}），原样保留链接")
+            stats = {"ok": 0, "fail": len(deals), "skipped": 0}
     print(f"转链结果: {stats}")
 
     with open(os.path.join(SITE_DIR, "deals.json"), "w", encoding="utf-8") as f:
@@ -269,4 +277,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(raw="--raw" in sys.argv)
