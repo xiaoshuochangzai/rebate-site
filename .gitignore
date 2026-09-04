@@ -15,3 +15,5 @@ test_jd_api.py
 __pycache__/
 *.pyc
 gh_check.html
+# 专用转链浏览器 profile（含登录 cookie，绝不外传）
+.jd-bot-profile/

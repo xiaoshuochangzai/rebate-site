@@ -13,6 +13,36 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import relay_drive
 
+# 优先走「专用转链浏览器」（独立 Chrome + CDP，不干扰用户主浏览器）；
+# 专用浏览器没起来时，自动回退到中继续航模式。
+try:
+    import jd_bot
+except Exception:  # pragma: no cover
+    jd_bot = None
+
+_CDP = None
+
+
+def _get_cdp():
+    """拿到专用浏览器的 CDP 连接（带复用与失效重连）。"""
+    global _CDP
+    if jd_bot is None:
+        return None
+    if _CDP is not None:
+        try:
+            _CDP.evaluate("1", timeout=10)
+            return _CDP
+        except Exception:
+            _CDP = None
+    try:
+        if not jd_bot.is_running():
+            return None
+        cdp, _t = jd_bot.connect_browser()
+        _CDP = cdp
+        return _CDP
+    except Exception:
+        return None
+
 
 URL = "https://union.jd.com/proManager/custompromotion"
 
@@ -88,17 +118,33 @@ CONVERT_JS = r"""
   setter.call(ta, MATERIAL);
   ta.dispatchEvent(new Event('input', {bubbles:true}));
   ta.dispatchEvent(new Event('change', {bubbles:true}));
+  // React 受控组件需要一拍才能把按钮从 disabled 放开
+  await new Promise(r => setTimeout(r, 500));
+  ta.focus();
 
   let clicked = false;
-  for (const b of document.querySelectorAll('button')) {
-    if ((b.innerText||'').includes('获取推广链接') && !b.disabled) {
-      b.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
-      b.click();
-      clicked = true;
-      break;
+  for (let w=0; w<12 && !clicked; w++) {
+    for (const b of document.querySelectorAll('button')) {
+      if ((b.innerText||'').includes('获取推广链接') && !b.disabled) {
+        b.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
+        b.click();
+        clicked = true;
+        break;
+      }
+    }
+    if (!clicked) {
+      // 再补一次填充，防止受控组件把值吞了
+      setter.call(ta, MATERIAL);
+      ta.dispatchEvent(new Event('input', {bubbles:true}));
+      await new Promise(r => setTimeout(r, 300));
     }
   }
-  if (!clicked) return JSON.stringify({err:'NO_BUTTON'});
+  if (!clicked) {
+    const diag = Array.from(document.querySelectorAll('button'))
+      .map(function(b){ return (b.innerText||'').trim().split('\n').join(' ') + '|dis=' + b.disabled; })
+      .filter(Boolean).slice(0, 10);
+    return JSON.stringify({err:'NO_BUTTON', taValueLen:(ta.value||'').length, btns:diag});
+  }
 
   let target = null;
   for (let i=0;i<50;i++) {
@@ -114,17 +160,27 @@ CONVERT_JS = r"""
 
 
 def convert_text(material_text, timeout=30):
-    """把一段线报文本送进万能转链，返回 ConvertSuperLink 解析后的 data 字段。"""
-    _ensure_jd_tab()
+    """把一段线报文本送进万能转链，返回 ConvertSuperLink 解析后的 data 字段。
+
+    驱动方式：优先 CDP 专用浏览器（不干扰用户），失败才用中继续航。
+    """
     js = CONVERT_JS.replace("__TEXT__", json.dumps(material_text, ensure_ascii=False))
-    res = relay_drive.evaluate(js, timeout=timeout)
-    if not res.get("success"):
-        return {"ok": False, "msg": "浏览器操控失败：" + str(res)[:200]}
-    val = res.get("result", {}).get("value", "")
+    cdp = _get_cdp()
+    if cdp is not None:
+        try:
+            val = cdp.evaluate(js, timeout=max(timeout, 60))
+        except Exception as e:
+            return {"ok": False, "msg": "专用浏览器转链异常：" + str(e)[:200]}
+    else:
+        _ensure_jd_tab()
+        res = relay_drive.evaluate(js, timeout=timeout)
+        if not res.get("success"):
+            return {"ok": False, "msg": "浏览器操控失败：" + str(res)[:200]}
+        val = res.get("result", {}).get("value", "")
     try:
         parsed = json.loads(val)
     except Exception:
-        return {"ok": False, "msg": "响应解析失败：" + val[:300]}
+        return {"ok": False, "msg": "响应解析失败：" + str(val)[:300]}
     if isinstance(parsed, dict) and "err" in parsed:
         return {"ok": False, "msg": parsed["err"]}
     try:

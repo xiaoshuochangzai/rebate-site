@@ -56,6 +56,7 @@ def build_html(deals, cfg, convert_stats):
     data_json = json.dumps(deals, ensure_ascii=False)
     stats = json.dumps(convert_stats, ensure_ascii=False)
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    ts_hm = time.strftime("%H:%M")
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -73,25 +74,28 @@ h1{{margin:0 0 8px;font-size:18px}}
 .chip.on{{background:var(--text);color:#fff;border-color:var(--text)}}
 input#kw{{flex:1;min-width:140px;padding:6px 12px;border:1px solid var(--line);border-radius:16px;outline:none}}
 .meta{{color:var(--sub);font-size:12px;margin-top:6px}}
-main{{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(6,1fr)}}
-@media(max-width:1500px){{main{{grid-template-columns:repeat(4,1fr)}}}}
-@media(max-width:1000px){{main{{grid-template-columns:repeat(3,1fr)}}}}
+main{{padding:16px;display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}}
+@media(max-width:1100px){{main{{grid-template-columns:repeat(3,1fr)}}}}
 @media(max-width:640px){{main{{grid-template-columns:repeat(2,1fr)}}}}
-.card{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}}
-.head{{display:flex;justify-content:flex-start;align-items:center;margin-bottom:10px}}
+.card{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;transition:transform .2s,box-shadow .2s}}
+.card:hover{{transform:translateY(-2px);box-shadow:0 4px 14px rgba(0,0,0,.08)}}
+.head{{display:flex;justify-content:flex-start;align-items:center;margin-bottom:8px}}
 .time{{color:var(--sub);font-size:12px}}
 .imgs{{display:flex;gap:6px;overflow:auto;margin-bottom:10px}}
-.imgs img{{width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}}
+.imgs img{{width:100%;height:auto;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex:0 0 30%}}
 .line{{margin:5px 0}}
 .btn{{display:inline-block;padding:5px 12px;border-radius:6px;background:var(--text);color:#fff;text-decoration:none;font-size:13px}}
 .btn.coupon{{background:var(--tb)}}
 .actions{{margin-top:12px;display:flex;gap:8px}}
 .copy{{flex:1;padding:7px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font-size:13px}}
 .note{{color:var(--sub);font-size:11px;margin-top:8px}}
-.price{{color:var(--jd);font-weight:bold;font-size:18px;margin:4px 0}}
-.price small{{color:var(--sub);font-weight:normal;font-size:11px;text-decoration:line-through;margin-left:6px}}
+.price{{color:var(--jd);font-weight:bold;font-size:26px;margin:2px 0 6px;line-height:1.2}}
+.price small{{color:var(--sub);font-weight:normal;font-size:13px;text-decoration:line-through;margin-left:8px}}
+.rlink{{margin-top:auto;padding-top:8px;font-size:11px;color:var(--sub);word-break:break-all;cursor:pointer;border-top:1px dashed var(--line)}}
+.rlink:hover{{color:var(--jd)}}
 footer{{padding:20px;text-align:center;color:var(--sub);font-size:12px}}
 #toast{{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 18px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}}
+#top{{position:fixed;right:22px;bottom:32px;width:44px;height:44px;border-radius:50%;background:var(--jd);color:#fff;border:none;font-size:20px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.22);display:none;z-index:98}}
 </style>
 </head>
 <body>
@@ -102,16 +106,27 @@ footer{{padding:20px;text-align:center;color:var(--sub);font-size:12px}}
     <span class="chip" data-p="2">京东</span>
     <input id="kw" placeholder="搜索商品关键词">
   </div>
-  <div class="meta">更新于 {ts} · 共 <b id="cnt">0</b> 条 · 转链成功 {convert_stats.get('ok',0)} 条</div>
+  <div class="meta">实时更新 · 截至 {ts_hm} · 今日已收录 <b id="cnt">0</b> 条 · 转链成功 {convert_stats.get('ok',0)} 条</div>
 </header>
 <main id="list"></main>
-<footer>数据更新每小时一次 · 双击任意卡片即可复制整条线报文案（含返利链接）</footer>
+<footer>数据每小时自动更新 · 双击卡片复制整条文an · 单击底部链接复制返利链接</footer>
+<button id="top" title="回到顶部">↑</button>
 <script>
 const DEALS = {data_json};
 const STATS = {stats};
 let filter = 'all', kw = '';
 function esc(s){{return String(s||'').replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);}}
 function cls(p){{return p==='2'?'jd':(p==='1'?'tb':'other');}}
+function rel(t){{
+  if(!t) return '';
+  const d = new Date(String(t).replace(/-/g,'/'));
+  if (isNaN(d.getTime())) return String(t);
+  const s = (Date.now()-d.getTime())/1000;
+  if (s < 60) return '刚刚';
+  if (s < 3600) return Math.floor(s/60)+'分钟前';
+  if (s < 86400) return Math.floor(s/3600)+'小时前';
+  return Math.floor(s/86400)+'天前';
+}}
 function render(){{
   const list = DEALS.filter(d=>(filter==='all'||d.platform===filter)
     && (!kw || JSON.stringify(d).toLowerCase().includes(kw.toLowerCase())));
@@ -135,9 +150,12 @@ function render(){{
       const old = d.price && d.price > d._couponAfterPrice ? `<small>¥${{d.price}}</small>` : '';
       priceHtml = `<div class="price">到手 ¥${{d._couponAfterPrice}}${{old}}</div>`;
     }}
+    // 返利链接：取第一个已转链的 u.jd.com 短链
+    const rebate = (d.list||[]).map(it=>it.url||'').filter(u=>u && u.indexOf('u.jd.com')>=0)[0] || '';
+    const rlink = rebate ? `<div class="rlink" data-text="${{esc(rebate)}}" title="点击复制返利链接">${{esc(rebate)}}</div>` : '';
     return `<div class="card" data-text="${{esc(copyText)}}" title="双击复制文案">
-      <div class="head"><span class="time">${{esc(d.time)}}</span></div>
-      ${{imgs}}${{priceHtml}}${{lines}}
+      <div class="head"><span class="time">${{esc(rel(d.time))}}</span></div>
+      ${{imgs}}${{priceHtml}}${{lines}}${{rlink}}
     </div>`;
   }}).join('');
 }}
@@ -156,6 +174,14 @@ document.getElementById('list').addEventListener('dblclick',e=>{{
   if(e.target.closest('a')) return;
   navigator.clipboard.writeText(card.dataset.text.replace(/\\\\n/g,'\\n')).then(()=>toast('已复制文案 ✓'));
 }});
+document.getElementById('list').addEventListener('click',e=>{{
+  if(e.target.classList.contains('rlink')){{
+    navigator.clipboard.writeText(e.target.dataset.text).then(()=>toast('返利链接已复制 ✓'));
+  }}
+}});
+const topBtn=document.getElementById('top');
+window.addEventListener('scroll',()=>{{topBtn.style.display = window.scrollY>400?'block':'none';}});
+topBtn.onclick=()=>window.scrollTo({{top:0,behavior:'smooth'}});
 render();
 </script>
 </body>
