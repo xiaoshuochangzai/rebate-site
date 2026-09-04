@@ -73,11 +73,12 @@ h1{{margin:0 0 8px;font-size:18px}}
 .chip.on{{background:var(--text);color:#fff;border-color:var(--text)}}
 input#kw{{flex:1;min-width:140px;padding:6px 12px;border:1px solid var(--line);border-radius:16px;outline:none}}
 .meta{{color:var(--sub);font-size:12px;margin-top:6px}}
-main{{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}}
+main{{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(6,1fr)}}
+@media(max-width:1500px){{main{{grid-template-columns:repeat(4,1fr)}}}}
+@media(max-width:1000px){{main{{grid-template-columns:repeat(3,1fr)}}}}
+@media(max-width:640px){{main{{grid-template-columns:repeat(2,1fr)}}}}
 .card{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}}
-.head{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}}
-.tag{{font-size:12px;padding:2px 8px;border-radius:4px;color:#fff}}
-.tag.jd{{background:var(--jd)}} .tag.tb{{background:var(--tb)}} .tag.other{{background:#8a9099}}
+.head{{display:flex;justify-content:flex-start;align-items:center;margin-bottom:10px}}
 .time{{color:var(--sub);font-size:12px}}
 .imgs{{display:flex;gap:6px;overflow:auto;margin-bottom:10px}}
 .imgs img{{width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}}
@@ -87,7 +88,6 @@ main{{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,
 .actions{{margin-top:12px;display:flex;gap:8px}}
 .copy{{flex:1;padding:7px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font-size:13px}}
 .note{{color:var(--sub);font-size:11px;margin-top:8px}}
-.converted{{color:var(--ok);font-size:11px}}
 .price{{color:var(--jd);font-weight:bold;font-size:18px;margin:4px 0}}
 .price small{{color:var(--sub);font-weight:normal;font-size:11px;text-decoration:line-through;margin-left:6px}}
 footer{{padding:20px;text-align:center;color:var(--sub);font-size:12px}}
@@ -125,8 +125,7 @@ function render(){{
         const href = it.url || it.coupon_url || it.item_id;
         const label = it.coupon_url ? '立即领券' : '抢购商品';
         const bcls = it.coupon_url ? 'btn coupon' : 'btn';
-        const mark = it.converted ? '<span class="converted">✓已转链</span>' : '';
-        return `<div class="line"><a class="${{bcls}}" href="${{esc(href)}}" target="_blank" rel="noopener">${{label}}</a> ${{mark}}</div>`;
+        return `<div class="line"><a class="${{bcls}}" href="${{esc(href)}}" target="_blank" rel="noopener">${{label}}</a></div>`;
       }}
       return `<div class="line">${{esc(it.content)}}</div>`;
     }}).join('');
@@ -137,7 +136,7 @@ function render(){{
       priceHtml = `<div class="price">到手 ¥${{d._couponAfterPrice}}${{old}}</div>`;
     }}
     return `<div class="card" data-text="${{esc(copyText)}}" title="双击复制文案">
-      <div class="head"><span class="tag ${{cls(d.platform)}}">${{esc(d.platform_name)}}</span><span class="time">${{esc(d.time)}}</span></div>
+      <div class="head"><span class="time">${{esc(d.time)}}</span></div>
       ${{imgs}}${{priceHtml}}${{lines}}
     </div>`;
   }}).join('');
@@ -169,14 +168,35 @@ def main():
         cfg = json.load(f)
     os.makedirs(SITE_DIR, exist_ok=True)
 
-    deals = []
-    for page in range(1, cfg["crawl"]["pages"] + 1):
+    # 自适应抓取：从第1页往后翻，直到整页都早于今日0点为止
+    today0 = time.strftime("%Y-%m-%d 00:00:00")
+    deals, seen = [], set()
+    page = 1
+    while page <= 60:  # 安全上限：60页×20条=1200条
         try:
             data = fetch_page(cfg, page)["data"]
-            deals.extend(normalize(i) for i in data.get("items", []))
         except Exception as e:
             print(f"[warn] 第{page}页抓取失败: {e}")
-    print(f"抓取线报 {len(deals)} 条")
+            break
+        items = data.get("items", []) or []
+        if not items:
+            break
+        expired = 0
+        for i in items:
+            n = normalize(i)
+            if n["id"] in seen:
+                continue
+            seen.add(n["id"])
+            if n["time"] >= today0:
+                deals.append(n)
+            else:
+                expired += 1
+        print(f"第{page}页: 累计今日{len(deals)}条 (本页早于0点{expired}条)")
+        if expired == len(items):  # 整页都过期，抓完今日了
+            break
+        page += 1
+        time.sleep(0.5)
+    print(f"今日({today0}起)线报共 {len(deals)} 条")
 
     try:
         deals, stats = jd_convert.convert_all_browser(deals, cfg)

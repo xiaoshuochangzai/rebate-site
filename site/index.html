@@ -15,11 +15,12 @@ h1{margin:0 0 8px;font-size:18px}
 .chip.on{background:var(--text);color:#fff;border-color:var(--text)}
 input#kw{flex:1;min-width:140px;padding:6px 12px;border:1px solid var(--line);border-radius:16px;outline:none}
 .meta{color:var(--sub);font-size:12px;margin-top:6px}
-main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(6,1fr)}
+@media(max-width:1500px){main{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:1000px){main{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:640px){main{grid-template-columns:repeat(2,1fr)}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.tag{font-size:12px;padding:2px 8px;border-radius:4px;color:#fff}
-.tag.jd{background:var(--jd)} .tag.tb{background:var(--tb)} .tag.other{background:#8a9099}
+.head{display:flex;justify-content:flex-start;align-items:center;margin-bottom:10px}
 .time{color:var(--sub);font-size:12px}
 .imgs{display:flex;gap:6px;overflow:auto;margin-bottom:10px}
 .imgs img{width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
@@ -29,7 +30,6 @@ main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,m
 .actions{margin-top:12px;display:flex;gap:8px}
 .copy{flex:1;padding:7px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font-size:13px}
 .note{color:var(--sub);font-size:11px;margin-top:8px}
-.converted{color:var(--ok);font-size:11px}
 .price{color:var(--jd);font-weight:bold;font-size:18px;margin:4px 0}
 .price small{color:var(--sub);font-weight:normal;font-size:11px;text-decoration:line-through;margin-left:6px}
 footer{padding:20px;text-align:center;color:var(--sub);font-size:12px}
@@ -44,7 +44,7 @@ footer{padding:20px;text-align:center;color:var(--sub);font-size:12px}
     <span class="chip" data-p="2">京东</span>
     <input id="kw" placeholder="搜索商品关键词">
   </div>
-  <div class="meta">更新于 2026-09-04 11:18:08 · 共 <b id="cnt">0</b> 条 · 转链成功 20 条</div>
+  <div class="meta">更新于 2026-09-04 14:19:10 · 共 <b id="cnt">0</b> 条 · 转链成功 20 条</div>
 </header>
 <main id="list"></main>
 <footer>数据更新每小时一次 · 双击任意卡片即可复制整条线报文案（含返利链接）</footer>
@@ -67,8 +67,7 @@ function render(){
         const href = it.url || it.coupon_url || it.item_id;
         const label = it.coupon_url ? '立即领券' : '抢购商品';
         const bcls = it.coupon_url ? 'btn coupon' : 'btn';
-        const mark = it.converted ? '<span class="converted">✓已转链</span>' : '';
-        return `<div class="line"><a class="${bcls}" href="${esc(href)}" target="_blank" rel="noopener">${label}</a> ${mark}</div>`;
+        return `<div class="line"><a class="${bcls}" href="${esc(href)}" target="_blank" rel="noopener">${label}</a></div>`;
       }
       return `<div class="line">${esc(it.content)}</div>`;
     }).join('');
@@ -79,7 +78,7 @@ function render(){
       priceHtml = `<div class="price">到手 ¥${d._couponAfterPrice}${old}</div>`;
     }
     return `<div class="card" data-text="${esc(copyText)}" title="双击复制文案">
-      <div class="head"><span class="tag ${cls(d.platform)}">${esc(d.platform_name)}</span><span class="time">${esc(d.time)}</span></div>
+      <div class="head"><span class="time">${esc(d.time)}</span></div>
       ${imgs}${priceHtml}${lines}
     </div>`;
   }).join('');
