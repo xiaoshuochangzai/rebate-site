@@ -91,6 +91,7 @@ main{{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,
 .price{{color:var(--jd);font-weight:bold;font-size:18px;margin:4px 0}}
 .price small{{color:var(--sub);font-weight:normal;font-size:11px;text-decoration:line-through;margin-left:6px}}
 footer{{padding:20px;text-align:center;color:var(--sub);font-size:12px}}
+#toast{{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 18px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}}
 </style>
 </head>
 <body>
@@ -99,14 +100,12 @@ footer{{padding:20px;text-align:center;color:var(--sub);font-size:12px}}
   <div class="bar">
     <span class="chip on" data-p="all">全部</span>
     <span class="chip" data-p="2">京东</span>
-    <span class="chip" data-p="1">淘宝</span>
-    <span class="chip" data-p="3">飞猪</span>
     <input id="kw" placeholder="搜索商品关键词">
   </div>
   <div class="meta">更新于 {ts} · 共 <b id="cnt">0</b> 条 · 转链成功 {convert_stats.get('ok',0)} 条</div>
 </header>
 <main id="list"></main>
-<footer>数据更新每小时一次 · 点击「复制文案」可一键复制整条线报</footer>
+<footer>数据更新每小时一次 · 双击任意卡片即可复制整条线报文案（含返利链接）</footer>
 <script>
 const DEALS = {data_json};
 const STATS = {stats};
@@ -137,10 +136,9 @@ function render(){{
       const old = d.price && d.price > d._couponAfterPrice ? `<small>¥${{d.price}}</small>` : '';
       priceHtml = `<div class="price">到手 ¥${{d._couponAfterPrice}}${{old}}</div>`;
     }}
-    return `<div class="card">
+    return `<div class="card" data-text="${{esc(copyText)}}" title="双击复制文案">
       <div class="head"><span class="tag ${{cls(d.platform)}}">${{esc(d.platform_name)}}</span><span class="time">${{esc(d.time)}}</span></div>
       ${{imgs}}${{priceHtml}}${{lines}}
-      <div class="actions"><button class="copy" data-text="${{esc(copyText)}}">复制文案（含返利链接）</button></div>
     </div>`;
   }}).join('');
 }}
@@ -149,13 +147,15 @@ document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{{
   c.classList.add('on'); filter=c.dataset.p; render();
 }});
 document.getElementById('kw').oninput=e=>{{kw=e.target.value.trim(); render();}};
-document.getElementById('list').addEventListener('click',e=>{{
-  if(e.target.classList.contains('copy')){{
-    navigator.clipboard.writeText(e.target.dataset.text.replace(/\\\\n/g,'\\n')).then(()=>{{
-      const t=e.target.textContent; e.target.textContent='已复制 ✓';
-      setTimeout(()=>e.target.textContent=t,1200);
-    }});
-  }}
+function toast(msg){{
+  let t=document.getElementById('toast');
+  if(!t){{t=document.createElement('div');t.id='toast';document.body.appendChild(t);}}
+  t.textContent=msg; t.style.opacity='1'; clearTimeout(t.__h); t.__h=setTimeout(()=>t.style.opacity='0',1200);
+}}
+document.getElementById('list').addEventListener('dblclick',e=>{{
+  const card=e.target.closest('.card'); if(!card) return;
+  if(e.target.closest('a')) return;
+  navigator.clipboard.writeText(card.dataset.text.replace(/\\\\n/g,'\\n')).then(()=>toast('已复制文案 ✓'));
 }});
 render();
 </script>
