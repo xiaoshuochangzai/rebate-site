@@ -46,6 +46,28 @@ def _get_cdp():
 
 URL = "https://union.jd.com/proManager/custompromotion"
 
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "link_cache.json")
+_cache = None
+
+
+def _cache_load():
+    global _cache
+    if _cache is None:
+        try:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                _cache = json.load(f)
+        except Exception:
+            _cache = {}
+    return _cache
+
+
+def _cache_save():
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_cache, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[warn] 缓存写入失败: {e}")
+
 
 def _find_jd_tab():
     info = relay_drive.list_tabs()
@@ -216,10 +238,43 @@ def _build_material(deal):
     return "\n".join(lines).strip()
 
 
-def convert_all_browser(deals, cfg=None):
-    """逐条调用万能转链。返回 (enriched_deals, stats)。"""
+def convert_all_browser(deals, cfg=None, on_progress=None):
+    """逐条调用万能转链。返回 (enriched_deals, stats)。
+
+    - 每条之间默认间隔 2.5 秒（环境变量 JD_CONV_DELAY 可调），防限流
+    - 检测到「访问频繁/NO_RESPONSE」自动退避 120s*attempt 重试（最多3次）
+    - 转链结果按 material 文本 md5 缓存到 link_cache.json，重跑秒回
+    - on_progress(done_deals, stats)：每完成一条回调（用于增量落盘/推送）
+    """
+    import hashlib
+
     stats = {"ok": 0, "fail": 0, "skipped": 0}
     out = []
+    delay = float(os.environ.get("JD_CONV_DELAY", "2.5"))
+    cache = _cache_load()
+
+    def apply_result(deal, data):
+        imgs = [normalize_jd_image(u) for u in (data.get("imgList") or [])]
+        imgs = [u for u in imgs if u][:3]
+        promo = data.get("promotionUrl") or ""
+        if not promo and data.get("formatContext"):
+            import re as _re
+            m = _re.search(r'https?://[^\s]+', data["formatContext"])
+            if m:
+                promo = m.group(0)
+        for it in deal.get("list", []) or []:
+            it["url"] = promo or it.get("coupon_url") or it.get("item_id")
+            it["converted"] = bool(promo)
+        deal["_formatContext"] = data.get("formatContext") or ""
+        deal["_images"] = imgs
+        deal["_price"] = data.get("price")
+        deal["_purchasePrice"] = data.get("purchasePrice")
+        deal["_couponAfterPrice"] = data.get("couponAfterPrice")
+        deal["_shortTitle"] = data.get("shortTitle") or data.get("wlUnitPrice") or ""
+        if imgs and not deal.get("images"):
+            deal["images"] = imgs
+        return promo
+
     for i, deal in enumerate(deals):
         if str(deal.get("platform")) != "2":
             for it in deal.get("list", []) or []:
@@ -235,37 +290,51 @@ def convert_all_browser(deals, cfg=None):
             stats["fail"] += 1
             continue
         print(f"  [{i+1}/{len(deals)}] 转链：{deal.get('title') or deal.get('short_title') or '?'[:30]}")
-        r = convert_text(text)
-        if not r.get("ok"):
-            print(f"    ✗ {r.get('msg', '')[:80]}")
-            stats["fail"] += 1
-            out.append({**deal, "_converted": False, "_msg": r.get("msg", "")})
+        key = hashlib.md5(text.encode("utf-8")).hexdigest()
+        cached = cache.get(key)
+        if cached:
+            promo = apply_result(deal, cached)
+            stats["ok" if promo else "fail"] += 1
+            print(f"    ✓(缓存) {promo[:50]}")
+            out.append(deal)
+            if on_progress:
+                try:
+                    on_progress(out, stats)
+                except Exception as e:
+                    print(f"    [warn] progress: {e}")
             continue
-        data = r["data"]
-        imgs = [normalize_jd_image(u) for u in (data.get("imgList") or [])]
-        imgs = [u for u in imgs if u][:3]
-        # 提取 formatContext 中的抢购链接
-        promo = data.get("promotionUrl") or ""
-        if not promo and data.get("formatContext"):
-            import re as _re
-            m = _re.search(r'https?://[^\s]+', data["formatContext"])
-            if m:
-                promo = m.group(0)
-        # 把返利链接塞进每条 item
-        for it in deal.get("list", []) or []:
-            it["url"] = promo or it.get("coupon_url") or it.get("item_id")
-            it["converted"] = bool(promo)
-        deal["_formatContext"] = data.get("formatContext") or ""
-        deal["_images"] = imgs
-        deal["_price"] = data.get("price")
-        deal["_purchasePrice"] = data.get("purchasePrice")
-        deal["_couponAfterPrice"] = data.get("couponAfterPrice")
-        deal["_shortTitle"] = data.get("shortTitle") or data.get("wlUnitPrice") or ""
-        if imgs and not deal.get("images"):
-            deal["images"] = imgs
-        stats["ok" if promo else "fail"] += 1
-        print(f"    ✓ 到手 ¥{data.get('couponAfterPrice') or data.get('purchasePrice') or '?'} | {promo[:50]}")
-        out.append(deal)
+
+        attempt = 0
+        while True:
+            r = convert_text(text)
+            if r.get("ok"):
+                data = r["data"]
+                cache[key] = data
+                _cache_save()
+                promo = apply_result(deal, data)
+                stats["ok" if promo else "fail"] += 1
+                print(f"    ✓ 到手 ¥{data.get('couponAfterPrice') or data.get('purchasePrice') or '?'} | {promo[:50]}")
+                out.append(deal)
+                break
+            msg = str(r.get("msg", ""))
+            attempt += 1
+            if ("频繁" in msg) or ("NO_RESPONSE" in msg) or ("NO_BUTTON" in msg):
+                if attempt <= 3:
+                    wait = 120 * attempt
+                    print(f"    ⏳ 疑似限流（{msg[:60]}），暂停 {wait}s 后重试 {attempt}/3")
+                    time.sleep(wait)
+                    continue
+            print(f"    ✗ {msg[:100]}")
+            stats["fail"] += 1
+            out.append({**deal, "_converted": False, "_msg": msg})
+            break
+
+        if on_progress:
+            try:
+                on_progress(out, stats)
+            except Exception as e:
+                print(f"    [warn] progress: {e}")
+        time.sleep(delay)
     return out, stats
 
 
