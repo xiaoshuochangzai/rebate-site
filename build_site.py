@@ -138,9 +138,6 @@ max-height:196px;overflow:hidden;transition:max-height .3s}
 .content-box a.lnk{display:block;font-size:12px;line-height:1.7;color:#3C6FE8;
 word-break:break-all;margin:1px 0;text-decoration:none}
 .content-box a.lnk:hover{color:var(--jd);text-decoration:underline}
-.rlink{margin-top:8px;font-size:11px;color:#8d939b;background:#FAFBFC;border:1px dashed #e3e6ec;
-border-radius:5px;padding:5px 7px;word-break:break-all;line-height:1.5}
-.rlink:hover{color:var(--jd);border-color:#f3c9c6;background:#fff7f6}
 
 .content-section-info{margin-top:auto;padding-top:8px;min-height:38px;display:flex;
 justify-content:space-between;align-items:center;border-top:1px solid #F0F1F4}
@@ -199,7 +196,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 </div>
 
 <footer>
-  数据每小时自动更新 · 双击卡片（或点顶部红条）复制完整文案 · 单击底部虚线框复制返利链接<br>
+  数据每小时自动更新 · 双击卡片（或点顶部红条）复制完整文案<br>
   好价线报 · __TS__
 </footer>
 
@@ -265,27 +262,21 @@ function cardHtml(d){
 
   // 精品库式呈现：文案文字 + 链接原文，不做任何按钮
   const body = [];
-  let rebate = '';
   (d.list||[]).forEach(it=>{
     if(it.content) body.push('<div class="ct">'+esc(it.content)+'</div>');
     const u = (it.url && /^https?:\\/\\//i.test(it.url)) ? it.url : pickLink(it);
-    if(u){
-      if(u.indexOf('u.jd.com')>=0) rebate = rebate || u;
-      body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>');
-    }
+    if(u) body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>');
     const c = pickCoupon(it);
     if(c) body.push('<a class="lnk" href="'+esc(c)+'" target="_blank" rel="noopener">'+esc(c)+'</a>');
   });
   const box = '<div class="content-box">'+(body.length?body.join(''):'<div class="ct">（无文案）</div>')+'</div>';
-  // 已转链的返利链接（带自己 unionId）单独露出，点一下即复制
-  const rHtml = rebate ? '<div class="rlink" data-text="'+esc(rebate)+'" title="点击复制返利链接">返利链接：'+esc(rebate)+'</div>' : '';
 
   return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'">'
     + '<div class="image-section">'+img+'</div>'
     + '<div class="content-section">'
     +   '<div class="turn-link">一键复制文案</div>'
     +   '<div class="content-section-item">'
-    +     priceHtml + box + rHtml
+    +     priceHtml + box
     +     '<div class="content-section-info">'
     +       '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
     +       '<span class="reltime">'+esc(rel(d.time))+'</span></div>'
@@ -351,7 +342,6 @@ kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.t
 const listEl = document.getElementById('list');
 listEl.addEventListener('click', e=>{
   if(e.target.closest('a')) return;
-  if(e.target.classList.contains('rlink')){ copy(e.target.dataset.text, '返利链接已复制 ✓'); return; }
   const card = e.target.closest('.report-item'); if(!card) return;
   if(e.target.classList.contains('copybtn') || e.target.classList.contains('turn-link')){
     copy(card.dataset.text, '文案已复制 ✓'); return;
