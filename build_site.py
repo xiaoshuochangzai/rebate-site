@@ -277,7 +277,6 @@ function cardHtml(d){
     +     '<div class="content-section-info">'
     +       '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
     +       '<span class="reltime">'+esc(rel(d.time))+'</span></div>'
-    +       '<span class="copybtn">复制</span>'
     +     '</div>'
     +   '</div>'
     + '</div>'
