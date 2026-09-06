@@ -124,8 +124,6 @@ def main():
     cfg = load_json(os.path.join(BASE_DIR, "config.json"), {})
     cfg.setdefault("crawl", {}).setdefault("page_size", 20)
 
-    deals = [d for d in load_json(os.path.join(SITE_DIR, "deals.json"), []) if has_link(d)]
-    have_ids = {str(d.get("id")) for d in deals}
     seen = set(load_json(SEEN_FILE, []))
 
     if do_init or not seen:
@@ -136,9 +134,12 @@ def main():
         if do_init:
             return
 
-    log(f"开始轮询：现有 {len(deals)} 条，间隔 {interval}s，只处理新线报")
+    log(f"开始轮询：间隔 {interval}s，只处理新线报（每轮从磁盘重新载入，保留已转链结果）")
     while True:
         try:
+            # 每轮从磁盘重新载入，确保 convert_two.py / deploy 写回的转链结果不被覆盖
+            deals = [d for d in load_json(os.path.join(SITE_DIR, "deals.json"), []) if has_link(d)]
+            have_ids = {str(d.get("id")) for d in deals}
             latest = fetch_latest(cfg)
             fresh = [d for d in latest if str(d["id"]) not in seen and str(d["id"]) not in have_ids]
             if fresh:
