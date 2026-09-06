@@ -196,7 +196,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 <div id="toast"></div>
 
 <script>
-const DEALS = __DATA__;
+let DEALS = __DATA__;
 const PAGE_SIZE = 60;
 let filter = 'all', kw = '', shown = 0;
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
@@ -372,6 +372,33 @@ const PNAME = {'1':'淘宝','2':'京东','3':'飞猪'};
     + arr.map(p=>'<li data-p="'+esc(p)+'">'+esc(PNAME[p]||p)+'</li>').join('');
 })();
 render(true);
+
+// 实时数据：内嵌数据只保证首屏秒开，加载后再从 KV 接口拉最新，
+// 有变化就整体替换重渲染（KV 由监控端直写，不经 CF 构建）
+(function(){
+  fetch('/api/deals?ts='+Date.now(), {cache:'no-store'})
+    .then(r=>r.ok ? r.json() : null)
+    .then(fresh=>{
+      if(!Array.isArray(fresh) || !fresh.length) return;
+      const oldTop = DEALS.length ? String(DEALS[0].id) : '';
+      const newTop = String(fresh[0].id||'');
+      const oldLen = DEALS.length, newLen = fresh.length;
+      if(newTop === oldTop && newLen === oldLen) return;  // 没变化不重绘
+      DEALS = fresh;
+      // 重建平台筛选项
+      const seen = {}, arr = [];
+      DEALS.forEach(d=>{ if(d.platform && !seen[d.platform]){ seen[d.platform]=1; arr.push(d.platform); } });
+      arr.sort();
+      document.getElementById('plat').innerHTML =
+        '<li class="active" data-p="all">全部</li>'
+        + arr.map(p=>'<li data-p="'+esc(p)+'">'+esc(PNAME[p]||p)+'</li>').join('');
+      render(true);
+      document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
+      const all = document.querySelector('#plat li[data-p="all"]');
+      if(all) all.classList.add('active');
+    })
+    .catch(()=>{});
+})();
 </script>
 </body>
 </html>
