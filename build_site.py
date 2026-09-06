@@ -287,7 +287,7 @@ function cardHtml(d){
   const box = '<div class="content-box">'+(body.length?body.join(''):'<div class="ct">（无文案）</div>')+'</div>';
   const info = '<div class="content-section-info">'
     + '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
-    + '<span class="reltime">'+esc(rel(d.time))+'</span></div>'
+    + '<span class="reltime">'+esc(rel(d._addedAt || d.time))+'</span></div>'
     + '</div>';
 
   // 淘宝卡：左边线报内容、右边图片（有几张图用几张），学大淘客排版

@@ -13,6 +13,7 @@
     python incremental.py --interval 120
 """
 import json
+import atexit
 import os
 import subprocess
 import sys
@@ -28,6 +29,7 @@ SEEN_FILE = os.path.join(BASE_DIR, "seen_ids.json")
 PENDING_FILE = os.path.join(BASE_DIR, "pending.json")
 DTK_SEEN_FILE = os.path.join(BASE_DIR, "seen_dtk.json")
 DTK_PENDING_FILE = os.path.join(BASE_DIR, "pending_dtk.json")
+LOCK_FILE = os.path.join(BASE_DIR, "monitor.lock")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
 DEBOUNCE = 20  # 防抖窗口：KV 直写便宜又即时，20s 内的变更合并成一次写
 MAX_DEALS = 500  # 站上最多保留条数（超出裁最旧的）
@@ -113,39 +115,50 @@ def flush_if_due(force=False):
 
 
 def poll_dtk(deals, have_ids):
-    """大淘客淘宝线报：抓页面新线报 → 转链（红线：转不上不上站）→ 返回插入条数。"""
+    """大淘客淘宝线报：抓页面新线报 → 转链（红线：转不上不上站）→ 返回插入条数。
+
+    注：失败直接放弃、不重试——页面客户端会缓存「已转链」状态（isLoad），
+    点过的卡再点不再调转链 API（缓存秒弹「文案复制成功」），重试必失败；
+    且 Boss 明令旧的不要，页面卡池也只留最新 12 张。"""
     import dtk_convert
     dtk_seen = set(load_json(DTK_SEEN_FILE, []))
-    pending = load_json(DTK_PENDING_FILE, [])
-    first_run = not dtk_seen and not pending
+    first_run = not dtk_seen
     inserted = 0
     d = None
     try:
-        d = dtk_convert.Dtk()
-        tips = d.fetch_tips()
+        # 首选纯 API：页面 DOM 的自动刷新会被 Chrome 冻结（断连 30s 标签即冻结，
+        # 再连上 DOM 还是旧的）导致淘宝「假死」；xb-list 接口裸调即可用，永不冻结
+        tips = dtk_convert.fetch_tips_api()
+        if tips is None:
+            d = dtk_convert.Dtk()
+            tips = d.fetch_tips()
         if not tips:
             return 0
-
-        # 首次运行：只转最新 3 条，其余记为已见（避免全量补扫）
-        if first_run:
-            for t in tips[3:]:
-                dtk_seen.add(dtk_convert.to_deal(t, None)["id"])
-            tips = tips[:3]
 
         def key_of(t):
             return dtk_convert.to_deal(t, None)["id"]
 
+        # 首次运行（Boss 明令）：页面上现存的全部记为基线跳过，只上之后新出的
+        if first_run:
+            for t in tips:
+                dtk_seen.add(key_of(t))
+            save_json(DTK_SEEN_FILE, sorted(dtk_seen))
+            log(f"淘宝基线已建立：现存 {len(tips)} 条全部跳过，只收之后新出的")
+            return 0
+
         fresh = [t for t in tips if key_of(t) not in dtk_seen and key_of(t) not in have_ids]
-        # 待转重试队列也拿出来（每轮最多 1 条，与京东待转节奏一致）
-        retry = pending[:1]
+        # v4 纯 API 直调版：转链不发页面请求，无需 reload（列表自动更新，只读不写，
+        # 屏幕上不会再出现大淘客页面反复刷新）
+        fresh = fresh[:3]  # 单轮上限：转链队列慢（实测 5~45s/条），防单轮过久饿着京东
 
         def handle(t):
             """转链并入库；成功返回 True。"""
             nonlocal inserted
-            out = d.convert_tip(t)
+            out = dtk_convert.convert_tip(t)
             if not out:
                 return False
             deal = dtk_convert.to_deal(t, out)
+            deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
             deals.insert(0, deal)
             have_ids.add(deal["id"])
             dtk_seen.add(deal["id"])
@@ -159,31 +172,9 @@ def poll_dtk(deals, have_ids):
                 continue
             log(f"新淘宝线报 {k} | {t['title'][:30]}")
             if not handle(t):
-                if not any(str(p.get("id")) == k for p in pending):
-                    pending.append(dtk_convert.to_deal(t, None))
-                log(f"  转链失败，进淘宝待转队列（{len(pending)} 条）")
+                log("  淘宝转链失败，放弃（不上站，旧线报不重试）")
             save_json(DTK_SEEN_FILE, sorted(dtk_seen))
             time.sleep(3)  # 单条间隔，防风控
-
-        for p in retry:
-            k = str(p.get("id"))
-            tip_like = {"idx": 0, "title": k, "rel": "",
-                        "text": (p.get("list") or [{}])[0].get("content", "")[:120]}
-            # 重试需在页面上重新找到该线报；找不到就轮转到队尾
-            match = next((t for t in tips if key_of(t) == k), None)
-            if match is None:
-                pending = pending[1:] + [p]
-                save_json(DTK_PENDING_FILE, pending)
-                continue
-            if handle(match):
-                pending = [x for x in pending if str(x.get("id")) != k]
-                save_json(DTK_PENDING_FILE, pending)
-                log(f"淘宝补转成功并落盘 {k}")
-            else:
-                pending = pending[1:] + [p]
-                save_json(DTK_PENDING_FILE, pending)
-                log(f"淘宝补转仍失败 {k}（队列轮转）")
-            time.sleep(3)
 
         save_json(DTK_SEEN_FILE, sorted(dtk_seen))
     except Exception as e:
@@ -231,7 +222,28 @@ def fetch_latest(cfg, pages=2):
     return out
 
 
+def acquire_single_instance():
+    """单实例锁：已有监控在跑时本实例直接退出（防双开互踩覆盖 deals.json）。"""
+    import psutil
+    if os.path.exists(LOCK_FILE):
+        try:
+            old = int(open(LOCK_FILE, encoding="utf-8").read().strip())
+            if old != os.getpid():
+                p = psutil.Process(old)
+                if p.is_running() and "python" in (p.name() or "").lower():
+                    log(f"已有监控实例在跑（PID {old}），本实例退出")
+                    sys.exit(0)
+        except (psutil.NoSuchProcess, ValueError, ProcessLookupError):
+            pass  # 旧实例已死，锁过期，接管
+        except Exception:
+            pass
+    with open(LOCK_FILE, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+    atexit.register(lambda: os.path.exists(LOCK_FILE) and os.remove(LOCK_FILE))
+
+
 def main():
+    acquire_single_instance()
     args = sys.argv[1:]
     once = "--once" in args
     do_init = "--init" in args
@@ -279,6 +291,7 @@ def main():
                         STATE[k] = STATE.get(k, 0) + v
                     conv = out[0] if out else d
                     if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+                        conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
                         deals.insert(0, conv)
                         have_ids.add(wid)
                         persist(deals)
@@ -306,6 +319,7 @@ def main():
                     out, st = jd_convert.convert_all_browser([d], cfg)
                     conv = out[0] if out else d
                     if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+                        conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
                         deals.insert(0, conv)
                         have_ids.add(wid)
                         pending = [p for p in pending if str(p.get("id")) != wid]
@@ -319,6 +333,9 @@ def main():
                         log(f"补转仍失败 {wid}（队列轮转，共 {len(pending)} 条待转）")
                 except Exception as e:
                     log(f"补转异常 {wid}：{str(e)[:80]}")
+            # 京东的变更先推上 KV（淘宝转链一条要 1~2 分钟，不能让它压着京东的更新）
+            flush_if_due(force=True)
+
             # 大淘客淘宝线报（与京东共用机器人浏览器，串行执行）
             try:
                 n = poll_dtk(deals, have_ids)
@@ -327,6 +344,15 @@ def main():
                     mark_dirty(f"dtk x{n}")
             except Exception as e:
                 log(f"淘宝轮询异常：{str(e)[:100]}")
+
+            # 只保留今日线报（Boss：旧的就不要了）
+            today0 = time.strftime("%Y-%m-%d 00:00:00")
+            pruned = [x for x in deals if str(x.get("time") or "") >= today0]
+            if len(pruned) != len(deals):
+                log(f"清理旧线报 {len(deals) - len(pruned)} 条（只保留今日）")
+                deals = pruned
+                persist(deals)
+                mark_dirty("prune old")
 
             # 只保留最新 MAX_DEALS 条，防数据无限膨胀
             if len(deals) > MAX_DEALS:
