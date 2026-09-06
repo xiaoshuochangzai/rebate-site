@@ -26,8 +26,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.join(BASE_DIR, "site")
 SEEN_FILE = os.path.join(BASE_DIR, "seen_ids.json")
 PENDING_FILE = os.path.join(BASE_DIR, "pending.json")
+DTK_SEEN_FILE = os.path.join(BASE_DIR, "seen_dtk.json")
+DTK_PENDING_FILE = os.path.join(BASE_DIR, "pending_dtk.json")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
 DEBOUNCE = 20  # 防抖窗口：KV 直写便宜又即时，20s 内的变更合并成一次写
+MAX_DEALS = 500  # 站上最多保留条数（超出裁最旧的）
 DIRTY = {"flag": False, "since": 0.0, "note": ""}
 
 
@@ -109,14 +112,99 @@ def flush_if_due(force=False):
         log("KV 与 git 都失败，已重置防抖窗口，下轮重试")
 
 
+def poll_dtk(deals, have_ids):
+    """大淘客淘宝线报：抓页面新线报 → 转链（红线：转不上不上站）→ 返回插入条数。"""
+    import dtk_convert
+    dtk_seen = set(load_json(DTK_SEEN_FILE, []))
+    pending = load_json(DTK_PENDING_FILE, [])
+    first_run = not dtk_seen and not pending
+    inserted = 0
+    d = None
+    try:
+        d = dtk_convert.Dtk()
+        tips = d.fetch_tips()
+        if not tips:
+            return 0
+
+        # 首次运行：只转最新 3 条，其余记为已见（避免全量补扫）
+        if first_run:
+            for t in tips[3:]:
+                dtk_seen.add(dtk_convert.to_deal(t, None)["id"])
+            tips = tips[:3]
+
+        def key_of(t):
+            return dtk_convert.to_deal(t, None)["id"]
+
+        fresh = [t for t in tips if key_of(t) not in dtk_seen and key_of(t) not in have_ids]
+        # 待转重试队列也拿出来（每轮最多 1 条，与京东待转节奏一致）
+        retry = pending[:1]
+
+        def handle(t):
+            """转链并入库；成功返回 True。"""
+            nonlocal inserted
+            out = d.convert_tip(t)
+            if not out:
+                return False
+            deal = dtk_convert.to_deal(t, out)
+            deals.insert(0, deal)
+            have_ids.add(deal["id"])
+            dtk_seen.add(deal["id"])
+            inserted += 1
+            log(f"淘宝线报已转链落盘 {deal['id']} | {deal['list'][0]['content'][:26]}")
+            return True
+
+        for t in fresh:
+            k = key_of(t)
+            if k in dtk_seen:
+                continue
+            log(f"新淘宝线报 {k} | {t['title'][:30]}")
+            if not handle(t):
+                if not any(str(p.get("id")) == k for p in pending):
+                    pending.append(dtk_convert.to_deal(t, None))
+                log(f"  转链失败，进淘宝待转队列（{len(pending)} 条）")
+            save_json(DTK_SEEN_FILE, sorted(dtk_seen))
+            time.sleep(3)  # 单条间隔，防风控
+
+        for p in retry:
+            k = str(p.get("id"))
+            tip_like = {"idx": 0, "title": k, "rel": "",
+                        "text": (p.get("list") or [{}])[0].get("content", "")[:120]}
+            # 重试需在页面上重新找到该线报；找不到就轮转到队尾
+            match = next((t for t in tips if key_of(t) == k), None)
+            if match is None:
+                pending = pending[1:] + [p]
+                save_json(DTK_PENDING_FILE, pending)
+                continue
+            if handle(match):
+                pending = [x for x in pending if str(x.get("id")) != k]
+                save_json(DTK_PENDING_FILE, pending)
+                log(f"淘宝补转成功并落盘 {k}")
+            else:
+                pending = pending[1:] + [p]
+                save_json(DTK_PENDING_FILE, pending)
+                log(f"淘宝补转仍失败 {k}（队列轮转）")
+            time.sleep(3)
+
+        save_json(DTK_SEEN_FILE, sorted(dtk_seen))
+    except Exception as e:
+        log(f"淘宝线报本轮异常：{str(e)[:120]}")
+    finally:
+        if d:
+            d.close()
+    return inserted
+
+
 def has_link(deal):
     """判定线报是否含商品/券链接。纯文字、无任何链接的（如「促销取消了，先忽略」）
-    对导购无意义，应忽略且不收录。"""
+    对导购无意义，应忽略且不收录。淘宝线报（淘口令形态）没有 http 链接，放行：
+    只要带 _originalContext（转链成品）就有效。"""
     for it in deal.get("list", []) or []:
         for key in ("item_id", "coupon_url", "content"):
             v = it.get(key) or ""
             if isinstance(v, str) and v.startswith("http"):
                 return True
+    if deal.get("_originalContext") or deal.get("_formatContext"):
+        return True
     return False
 
 
@@ -231,6 +319,19 @@ def main():
                         log(f"补转仍失败 {wid}（队列轮转，共 {len(pending)} 条待转）")
                 except Exception as e:
                     log(f"补转异常 {wid}：{str(e)[:80]}")
+            # 大淘客淘宝线报（与京东共用机器人浏览器，串行执行）
+            try:
+                n = poll_dtk(deals, have_ids)
+                if n:
+                    persist(deals)
+                    mark_dirty(f"dtk x{n}")
+            except Exception as e:
+                log(f"淘宝轮询异常：{str(e)[:100]}")
+
+            # 只保留最新 MAX_DEALS 条，防数据无限膨胀
+            if len(deals) > MAX_DEALS:
+                deals = deals[:MAX_DEALS]
+
         except Exception as e:
             log(f"本轮异常：{str(e)[:150]}")
 

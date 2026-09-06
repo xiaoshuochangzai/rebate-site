@@ -27,7 +27,7 @@ HEADERS = {
 }
 PLATFORM_MAP = {"1": "淘宝", "2": "京东", "3": "飞猪"}
 # 现阶段只上京东线报；以后要恢复淘宝/飞猪，改成 {"1", "2", "3"} 或设为空集合即可
-ONLY_PLATFORMS = {"2"}
+ONLY_PLATFORMS = {"1", "2"}
 
 
 def fetch_page(cfg, page_no):
@@ -106,6 +106,8 @@ margin:14px 0 4px;box-shadow:inset 2px 2px 3px 0 #e7eaee;border-radius:4px;font-
 .report-realtime .wire{display:inline-block;width:1px;height:14px;background:#dde3ea;margin-right:10px}
 .report-realtime .time,.report-realtime .num{display:inline-block;color:#ead2a7;font-weight:500;
 background:#212121;padding:0 6px;margin:0 3px;border-radius:4px;vertical-align:middle}
+.report-realtime .refresh{margin-left:8px;color:#f53245;font-weight:600;cursor:pointer;text-decoration:none}
+.report-realtime .refresh:hover{text-decoration:underline}
 
 /* ---------- 卡片网格 ---------- */
 .report-list{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:12px}
@@ -179,7 +181,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 
   <div class="report-realtime">
     <span class="realtime">实时更新</span><span class="wire"></span>截止
-    <span class="time">__TS_HM__</span>今日已经更新<span class="num" id="cnt">0</span>条
+    <span class="time">__TS_HM__</span>今日已经更新<span class="num" id="cnt">0</span>条<a class="refresh" href="javascript:location.reload()" title="点击刷新页面">刷新</a>
   </div>
 
   <div class="report-list" id="list"></div>
