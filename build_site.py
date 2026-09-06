@@ -229,6 +229,7 @@ function pickCoupon(it){
   return m ? m[0] : '';
 }
 function copyTextOf(d){
+  if(d._originalContext) return d._originalContext;
   if(d._formatContext) return d._formatContext;
   const parts = [];
   (d.list||[]).forEach(it=>{

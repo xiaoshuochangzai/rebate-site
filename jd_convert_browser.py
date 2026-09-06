@@ -270,6 +270,22 @@ def convert_all_browser(deals, cfg=None, on_progress=None):
         for it in deal.get("list", []) or []:
             it["url"] = promo or it.get("coupon_url") or it.get("item_id")
             it["converted"] = bool(promo)
+        # 券长链(coupon.m.jd.com) → 3.cn 短链：partialSuccessMsg 里的原始长链
+        # 与 failedUrlList 短链按出现顺序一一对应
+        import re as _re
+        shorts = [s for s in (data.get("failedUrlList") or []) if isinstance(s, str)]
+        longs = _re.findall(r'https?://[^\s\[\]】，,\s]+', data.get("partialSuccessMsg") or "")
+        seen, uniq_longs = set(), []
+        for u in longs:
+            if u not in seen:
+                seen.add(u)
+                uniq_longs.append(u)
+        for lo, sh in zip(uniq_longs, shorts):
+            for it in deal.get("list", []) or []:
+                cu = it.get("coupon_url") or ""
+                if lo in cu:
+                    it["coupon_url"] = cu.replace(lo, sh)
+        deal["_originalContext"] = data.get("originalContext") or ""
         deal["_formatContext"] = data.get("formatContext") or ""
         deal["_images"] = imgs
         deal["_price"] = data.get("price")
