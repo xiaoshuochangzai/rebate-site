@@ -297,7 +297,7 @@ def convert_all_browser(deals, cfg=None, on_progress=None):
             out.append({**deal, "_converted": False})
             stats["fail"] += 1
             continue
-        print(f"  [{i+1}/{len(deals)}] 转链：{deal.get('title') or deal.get('short_title') or '?'[:30]}")
+        print(f"  [{i+1}/{len(deals)}] 转链：{_build_material(deal).splitlines()[0][:30]}")
         key = hashlib.md5(text.encode("utf-8")).hexdigest()
         cached = cache.get(key)
         if cached:
