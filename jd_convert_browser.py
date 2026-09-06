@@ -225,24 +225,21 @@ def normalize_jd_image(url):
 
 
 def _build_material(deal):
-    """从好单库 deal 构造万能转链的输入文本：标题 + 商品链接。
-    券链接不传，因为券不会被转链且会触发 failed 提示。"""
-    title = deal.get("title") or deal.get("short_title") or ""
-    if not title:
-        # 好单库线报没有独立标题字段，用文案第一行当标题
-        for it in deal.get("list", []) or []:
-            c = (it.get("content") or "").strip()
-            if c:
-                title = c
-                break
-    title = title or "京东商品"
-    lines = [title]
+    """从好单库 deal 构造万能转链的输入文本。
+    按 Boss 要求：抓到的原始线报（文字 + 券链接 + 商品链接）全量按原始顺序复制进去，
+    就是好单库「复制文案」的原样内容。"""
+    lines = []
     for it in deal.get("list", []) or []:
-        item_id = it.get("item_id") or ""
-        if item_id.startswith("http"):
-            lines.append(item_id)
-        elif item_id:
-            lines.append("https://item.jd.com/" + item_id + ".html")
+        c = (it.get("content") or "").strip()
+        if c:
+            lines.append(c)
+        cu = (it.get("coupon_url") or "").strip()
+        if cu:
+            lines.append(cu)
+        iid = (it.get("item_id") or "").strip()
+        if iid:
+            lines.append(iid if iid.startswith("http")
+                         else "https://item.jd.com/" + iid + ".html")
     return "\n".join(lines).strip()
 
 
