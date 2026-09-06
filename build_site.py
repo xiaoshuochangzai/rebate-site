@@ -146,9 +146,6 @@ justify-content:space-between;align-items:center;border-top:1px solid #F0F1F4}
 display:flex;align-items:center;justify-content:center}
 .pf.jd{background:var(--jd)}.pf.tb{background:var(--tb)}.pf.fz{background:var(--fz)}.pf.ot{background:#a6abb3}
 .reltime{color:#9aa0a8;font-size:12px;margin-left:2px}
-.copybtn{font-size:12px;color:var(--brand);border:1px solid #D9E1FB;border-radius:12px;padding:2px 11px;
-transition:.15s}
-.copybtn:hover{background:var(--brand);color:#fff;border-color:var(--brand)}
 
 .more{margin:26px auto 0;width:150px;height:34px;line-height:34px;text-align:center;color:#8d939b;
 font-size:13px;background:#fff;border-radius:17px;box-shadow:var(--shadow);cursor:pointer}
@@ -340,13 +337,6 @@ document.getElementById('btnSearch').onclick = ()=>{ kw = kwInput.value.trim(); 
 kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.trim(); render(true);} });
 
 const listEl = document.getElementById('list');
-listEl.addEventListener('click', e=>{
-  if(e.target.closest('a')) return;
-  const card = e.target.closest('.report-item'); if(!card) return;
-  if(e.target.classList.contains('copybtn') || e.target.classList.contains('turn-link')){
-    copy(card.dataset.text, '文案已复制 ✓'); return;
-  }
-});
 listEl.addEventListener('dblclick', e=>{
   if(e.target.closest('a')) return;
   const card = e.target.closest('.report-item'); if(!card) return;
