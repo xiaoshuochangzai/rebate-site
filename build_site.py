@@ -191,7 +191,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 
   <div class="report-realtime">
     <span class="realtime">实时更新</span><span class="wire"></span>截止
-    <span class="time">__TS_HM__</span>今日已经更新<span class="num" id="cnt">0</span>条<a class="refresh" href="javascript:location.reload()" title="点击刷新页面">刷新</a>
+    <span class="time">__TS_HM__</span>今日已经更新<span class="num" id="cnt">0</span>条<a class="refresh" href="javascript:;" id="btnRefresh" title="刷新当前平台最新线报">刷新</a>
   </div>
 
   <div class="report-list" id="list"></div>
@@ -418,12 +418,22 @@ function refreshData(){
     })
     .catch(()=>false);
 }
-document.getElementById('btnRefresh').onclick = function(){
-  const a = this; a.textContent = '刷新中…';
-  refreshData().then(c=>{ a.textContent='刷新'; toast(c?'已更新到最新线报 ✓':'已是最新'); });
-};
+// 防御：元素缺失也不许炸掉后续脚本（上次就是这里 null 报错把首屏刷新带死的）
+const btnRefreshEl = document.getElementById('btnRefresh');
+if(btnRefreshEl){
+  btnRefreshEl.onclick = function(){
+    const a = this; a.textContent = '刷新中…';
+    refreshData().then(c=>{
+      a.textContent = '刷新';
+      toast(c ? '已更新到最新线报 ✓' : '已是最新');
+    });
+  };
+}
 // 首屏渲染后自动拉一次最新数据
-refreshData();
+refreshData().then(()=>{ // 数据落定后同步顶部「截止」时间，别让它停留在构建时刻
+  const ts = document.querySelector('.report-realtime .time');
+  if(ts) ts.textContent = new Date().toTimeString().slice(0,5);
+});
 </script>
 </body>
 </html>
