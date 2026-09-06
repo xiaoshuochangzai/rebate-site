@@ -131,16 +131,13 @@ display:flex;justify-content:center;align-items:center;opacity:0;transition:opac
 .price{color:var(--jd);font-size:22px;font-weight:800;line-height:1.2;margin-bottom:6px}
 .price i{font-size:13px;font-style:normal;font-weight:600}
 .price s{color:#b6bbc3;font-size:12px;font-weight:400;margin-left:6px}
-.content-box{font-size:13px;line-height:1.78;color:#34373d;white-space:pre-line;word-break:break-word;
-max-height:170px;overflow:hidden;transition:max-height .3s}
-.report-item:hover .content-box{max-height:600px}
-.content-box a{color:var(--brand);word-break:break-all}
-.content-box a.buy{color:var(--jd)}
-.lrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
-.lrow a{font-size:12px;padding:5px 14px;border-radius:15px;line-height:1.5}
-.lrow a.cp{background:linear-gradient(90deg,#FF8A00,#FF2D00);color:#fff}
-.lrow a.buy{background:#F2F5FD;color:var(--brand)}
-.lrow a.buy:hover{background:#E0EDFF}
+.content-box{font-size:13px;line-height:1.8;color:#34373d;word-break:break-word;
+max-height:196px;overflow:hidden;transition:max-height .3s}
+.report-item:hover .content-box{max-height:640px}
+.content-box .ct{white-space:pre-line}
+.content-box a.lnk{display:block;font-size:12px;line-height:1.7;color:#3C6FE8;
+word-break:break-all;margin:1px 0;text-decoration:none}
+.content-box a.lnk:hover{color:var(--jd);text-decoration:underline}
 .rlink{margin-top:8px;font-size:11px;color:#8d939b;background:#FAFBFC;border:1px dashed #e3e6ec;
 border-radius:5px;padding:5px 7px;word-break:break-all;line-height:1.5}
 .rlink:hover{color:var(--jd);border-color:#f3c9c6;background:#fff7f6}
@@ -247,8 +244,11 @@ function copyTextOf(d){
   const parts = [];
   (d.list||[]).forEach(it=>{
     if(it.content) parts.push(it.content);
-    const u = pickLink(it) || pickCoupon(it);
+    // 转链后写入的 it.url 优先，否则用原始 item_id / coupon_url
+    const u = (it.url && /^https?:\\/\\//i.test(it.url)) ? it.url : pickLink(it);
     if(u) parts.push(u);
+    const c = pickCoupon(it);
+    if(c && c !== u) parts.push(c);
   });
   return parts.join('\\n');
 }
@@ -263,20 +263,21 @@ function cardHtml(d){
     priceHtml = '<div class="price"><i>到手 ¥</i>'+esc(d._couponAfterPrice)+old+'</div>';
   }
 
-  const textLines = [], lrow = [];
+  // 精品库式呈现：文案文字 + 链接原文，不做任何按钮
+  const body = [];
   let rebate = '';
   (d.list||[]).forEach(it=>{
-    if(it.content) textLines.push(esc(it.content));
-    const u = pickLink(it);
+    if(it.content) body.push('<div class="ct">'+esc(it.content)+'</div>');
+    const u = (it.url && /^https?:\\/\\//i.test(it.url)) ? it.url : pickLink(it);
     if(u){
-      if(u.indexOf('u.jd.com')>=0){ rebate = rebate || u; lrow.push('<a class="buy" href="'+esc(u)+'" target="_blank" rel="noopener">去购买</a>'); }
-      else lrow.push('<a class="buy" href="'+esc(u)+'" target="_blank" rel="noopener">查看商品</a>');
+      if(u.indexOf('u.jd.com')>=0) rebate = rebate || u;
+      body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>');
     }
     const c = pickCoupon(it);
-    if(c) lrow.push('<a class="cp" href="'+esc(c)+'" target="_blank" rel="noopener">领券</a>');
+    if(c) body.push('<a class="lnk" href="'+esc(c)+'" target="_blank" rel="noopener">'+esc(c)+'</a>');
   });
-  const box = '<div class="content-box">'+(textLines.length?textLines.join('<br>'):'（无文案）')+'</div>';
-  const lrowHtml = lrow.length ? '<div class="lrow">'+lrow.join('')+'</div>' : '';
+  const box = '<div class="content-box">'+(body.length?body.join(''):'<div class="ct">（无文案）</div>')+'</div>';
+  // 已转链的返利链接（带自己 unionId）单独露出，点一下即复制
   const rHtml = rebate ? '<div class="rlink" data-text="'+esc(rebate)+'" title="点击复制返利链接">返利链接：'+esc(rebate)+'</div>' : '';
 
   return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'">'
@@ -284,7 +285,7 @@ function cardHtml(d){
     + '<div class="content-section">'
     +   '<div class="turn-link">一键复制文案</div>'
     +   '<div class="content-section-item">'
-    +     priceHtml + box + lrowHtml + rHtml
+    +     priceHtml + box + rHtml
     +     '<div class="content-section-info">'
     +       '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
     +       '<span class="reltime">'+esc(rel(d.time))+'</span></div>'
