@@ -171,6 +171,26 @@ def main():
                     deploy(deals, f"data: convert {wid}")
                 except Exception as e:
                     log(f"  转链异常：{str(e)[:100]}")
+
+            # 自动补转：每轮最多重试 1 条历史未转上链的（风控恢复后自动补齐）
+            unconv = [d for d in deals if not any(it.get("converted") for it in d.get("list", []))]
+            if unconv:
+                d = unconv[0]
+                wid = str(d.get("id"))
+                try:
+                    out, st = jd_convert.convert_all_browser([d], cfg)
+                    conv = out[0] if out else d
+                    if conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+                        for i, cur in enumerate(deals):
+                            if str(cur.get("id")) == wid:
+                                deals[i] = conv
+                                break
+                        log(f"补转成功 {wid}")
+                        deploy(deals, f"fix: 补转 {wid}")
+                    else:
+                        log(f"补转仍失败 {wid}（京东风控未恢复，下轮再试）")
+                except Exception as e:
+                    log(f"补转异常 {wid}：{str(e)[:80]}")
         except Exception as e:
             log(f"本轮异常：{str(e)[:150]}")
 
