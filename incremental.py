@@ -19,6 +19,7 @@ import sys
 import time
 
 import build_site
+import cf_kv
 import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,7 +27,7 @@ SITE_DIR = os.path.join(BASE_DIR, "site")
 SEEN_FILE = os.path.join(BASE_DIR, "seen_ids.json")
 PENDING_FILE = os.path.join(BASE_DIR, "pending.json")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
-DEBOUNCE = 45  # 防抖窗口：有新货先落盘，攒够 45s 没有新线报再合并推送一次
+DEBOUNCE = 20  # 防抖窗口：KV 直写便宜又即时，20s 内的变更合并成一次写
 DIRTY = {"flag": False, "since": 0.0, "note": ""}
 
 
@@ -85,19 +86,27 @@ def mark_dirty(note):
 
 
 def flush_if_due(force=False):
-    """防抖到期（或 force）就合并推送一次；推送失败则重置窗口下轮重试。"""
+    """防抖到期（或 force）就 KV 直写一次（即时生效，免 CF 构建）；
+    KV 失败退回 git 推送兜底。"""
     if not DIRTY["flag"]:
         return
     waited = time.time() - DIRTY["since"]
     if not force and waited < DEBOUNCE:
         log(f"防抖中：{int(DEBOUNCE - waited)}s 后合并推送")
         return
-    if git_push(DIRTY["note"]):
-        log(f"合并推送上线（防抖 {int(waited)}s，备注：{DIRTY['note']}）")
+    deals = load_json(os.path.join(SITE_DIR, "deals.json"), [])
+    ok, msg = cf_kv.put_deals(deals)
+    if ok:
+        log(f"KV 直写上线（防抖 {int(waited)}s，共 {len(deals)} 条）")
+        DIRTY["flag"] = False
+        return
+    log(f"KV 直写失败：{msg}，尝试 git 兜底")
+    if git_push(f"fallback: kv fail {DIRTY['note']}"):
+        log("git 兜底推送成功")
         DIRTY["flag"] = False
     else:
         DIRTY["since"] = time.time()
-        log("推送失败，已重置防抖窗口，下轮重试")
+        log("KV 与 git 都失败，已重置防抖窗口，下轮重试")
 
 
 def has_link(deal):
