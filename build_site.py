@@ -26,6 +26,8 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
 }
 PLATFORM_MAP = {"1": "淘宝", "2": "京东", "3": "飞猪"}
+# 现阶段只上京东线报；以后要恢复淘宝/飞猪，改成 {"1", "2", "3"} 或设为空集合即可
+ONLY_PLATFORMS = {"2"}
 
 
 def fetch_page(cfg, page_no):
@@ -185,12 +187,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
   <div class="screen">
     <div class="screen-item">
       <div class="title">平台：</div>
-      <ul id="plat">
-        <li class="active" data-p="all">全部</li>
-        <li data-p="2">京东</li>
-        <li data-p="1">淘宝</li>
-        <li data-p="3">飞猪</li>
-      </ul>
+      <ul id="plat"></ul>
     </div>
   </div>
 
@@ -216,7 +213,6 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 const DEALS = __DATA__;
 const PAGE_SIZE = 60;
 let filter = 'all', kw = '', shown = 0;
-
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function rel(t){
   if(!t) return '';
@@ -375,6 +371,17 @@ window.addEventListener('scroll', ()=>{
   }
 });
 topBtn.onclick = ()=>window.scrollTo({top:0,behavior:'smooth'});
+
+// 平台筛选项：按数据中实际存在的平台动态生成（只上京东时就只剩「全部/京东」）
+const PNAME = {'1':'淘宝','2':'京东','3':'飞猪'};
+(function(){
+  const seen = {}, arr = [];
+  DEALS.forEach(d=>{ if(d.platform && !seen[d.platform]){ seen[d.platform]=1; arr.push(d.platform); } });
+  arr.sort();
+  document.getElementById('plat').innerHTML =
+    '<li class="active" data-p="all">全部</li>'
+    + arr.map(p=>'<li data-p="'+esc(p)+'">'+esc(PNAME[p]||p)+'</li>').join('');
+})();
 render(true);
 </script>
 </body>
@@ -426,6 +433,12 @@ def main(raw=False):
         page += 1
         time.sleep(0.5)
     print(f"今日({today0}起)线报共 {len(deals)} 条")
+
+    if ONLY_PLATFORMS:
+        before = len(deals)
+        deals = [d for d in deals if d["platform"] in ONLY_PLATFORMS]
+        names = "/".join(PLATFORM_MAP.get(p, p) for p in sorted(ONLY_PLATFORMS))
+        print(f"平台过滤: {before} -> {len(deals)} 条（仅保留 {names}）")
 
     # 抓完立刻落盘，防止后面转链挂掉把抓取成果也丢了
     with open(os.path.join(SITE_DIR, "deals.json"), "w", encoding="utf-8") as f:
