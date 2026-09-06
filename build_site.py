@@ -253,25 +253,24 @@ function cardHtml(d){
     priceHtml = '<div class="price"><i>到手 ¥</i>'+esc(d._couponAfterPrice)+old+'</div>';
   }
 
-  // 精品库式呈现：文案文字 + 链接原文（同一链接只显示一次），不做任何按钮
+  // 精品库式呈现：文案文字 + 链接原文。去重规则 = 同一条链接只出一次，
+  // 不同链接（合集类多商品）各自出现在自己的文案位置
   const body = [];
   const seenLink = {};
-  let promoPushed = false;
   (d.list||[]).forEach(it=>{
     if(it.content) body.push('<div class="ct">'+esc(it.content)+'</div>');
     const c = pickCoupon(it);
     if(c && !seenLink[c]){ seenLink[c]=1;
       body.push('<a class="lnk" href="'+esc(c)+'" target="_blank" rel="noopener">'+esc(c)+'</a>'); }
-    // 商品链接位：原始 item_id 是链接的条目才算，转链链接只输出一次
-    if(it.item_id && /^https?:\\/\\//i.test(it.item_id) && !promoPushed){
+    // 商品链接位：原始 item_id 是链接的条目，渲染转链后的链接（去重按 URL）
+    if(it.item_id && /^https?:\\/\\//i.test(it.item_id)){
       const u = (it.url && /^https?:\\/\\//i.test(it.url)) ? it.url : it.item_id;
       if(u && !seenLink[u]){ seenLink[u]=1;
         body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>'); }
-      promoPushed = true;
     }
   });
   // 兜底：有转链链接但原始数据没有商品链接位（纯券线报转出来的）
-  if(!promoPushed){
+  {
     const u = ((d.list||[]).map(it=>it.url).find(x=>x && /^https?:\\/\\//i.test(x))) || '';
     if(u && !seenLink[u]){
       body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>');
