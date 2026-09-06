@@ -26,6 +26,8 @@ SITE_DIR = os.path.join(BASE_DIR, "site")
 SEEN_FILE = os.path.join(BASE_DIR, "seen_ids.json")
 PENDING_FILE = os.path.join(BASE_DIR, "pending.json")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
+DEBOUNCE = 45  # 防抖窗口：有新货先落盘，攒够 45s 没有新线报再合并推送一次
+DIRTY = {"flag": False, "since": 0.0, "note": ""}
 
 
 def log(msg):
@@ -65,16 +67,37 @@ def git_push(tag):
     return False
 
 
-def deploy(deals, tag):
-    """生成页面 + 推送上线。"""
+def persist(deals):
+    """只生成本地页面与数据文件（不推送）。"""
     cfg = load_json(os.path.join(BASE_DIR, "config.json"), {})
     html = build_site.build_html(deals, cfg, STATE)
     with open(os.path.join(SITE_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(html)
     save_json(os.path.join(SITE_DIR, "deals.json"), deals)
-    ok = git_push(tag)
-    log(f"已部署 {len(deals)} 条（推送{'成功' if ok else '失败，稍后重试'}）")
-    return ok
+
+
+def mark_dirty(note):
+    """标记有待推送的变更；首次标记时开始计防抖窗口。"""
+    if not DIRTY["flag"]:
+        DIRTY["since"] = time.time()
+        DIRTY["note"] = note
+    DIRTY["flag"] = True
+
+
+def flush_if_due(force=False):
+    """防抖到期（或 force）就合并推送一次；推送失败则重置窗口下轮重试。"""
+    if not DIRTY["flag"]:
+        return
+    waited = time.time() - DIRTY["since"]
+    if not force and waited < DEBOUNCE:
+        log(f"防抖中：{int(DEBOUNCE - waited)}s 后合并推送")
+        return
+    if git_push(DIRTY["note"]):
+        log(f"合并推送上线（防抖 {int(waited)}s，备注：{DIRTY['note']}）")
+        DIRTY["flag"] = False
+    else:
+        DIRTY["since"] = time.time()
+        log("推送失败，已重置防抖窗口，下轮重试")
 
 
 def has_link(deal):
