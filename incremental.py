@@ -32,7 +32,8 @@ DTK_PENDING_FILE = os.path.join(BASE_DIR, "pending_dtk.json")
 LOCK_FILE = os.path.join(BASE_DIR, "monitor.lock")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
 DEBOUNCE = 20  # 防抖窗口：KV 直写便宜又即时，20s 内的变更合并成一次写
-MAX_DEALS = 500  # 站上最多保留条数（超出裁最旧的）
+MAX_DEALS = 6000  # 站上最多保留条数（7天×约800条/天，防数据无限膨胀的最终闸门）
+RETAIN_DAYS = 7  # 保留最近 7 天（Boss 2026-09-07：如 1-7 号的数据，在 8 号那天清掉 1 号的）
 DIRTY = {"flag": False, "since": 0.0, "note": ""}
 
 
@@ -345,11 +346,12 @@ def main():
             except Exception as e:
                 log(f"淘宝轮询异常：{str(e)[:100]}")
 
-            # 只保留今日线报（Boss：旧的就不要了）
-            today0 = time.strftime("%Y-%m-%d 00:00:00")
-            pruned = [x for x in deals if str(x.get("time") or "") >= today0]
+            # 滚动窗口：只保留最近 RETAIN_DAYS 天（按线报发布时间）
+            cutoff = time.strftime("%Y-%m-%d 00:00:00",
+                                   time.localtime(time.time() - (RETAIN_DAYS - 1) * 86400))
+            pruned = [x for x in deals if str(x.get("time") or "") >= cutoff]
             if len(pruned) != len(deals):
-                log(f"清理旧线报 {len(deals) - len(pruned)} 条（只保留今日）")
+                log(f"清理 {len(deals) - len(pruned)} 条 {RETAIN_DAYS} 天前的旧线报（保留 {cutoff[:10]} 起）")
                 deals = pruned
                 persist(deals)
                 mark_dirty("prune old")

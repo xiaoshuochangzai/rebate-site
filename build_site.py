@@ -100,6 +100,23 @@ padding:0 5px;border-radius:2px;transition:.15s}
 .screen-item ul li:hover{color:var(--brand)}
 .screen-item ul li.active{background:#E0EDFF;color:var(--brand);font-weight:500}
 
+/* ---------- 历史价格跟踪 ---------- */
+.hisbox{margin-left:auto;display:flex;align-items:center;gap:8px}
+.hisbox .title{font-size:12px;color:#666;white-space:nowrap}
+.hisbox input{width:220px;height:30px;padding:0 10px;background:#F9FBFF;
+border:1px solid #D9DFED;border-radius:8px;outline:none;font-size:12px;color:#333}
+.hisbox input:focus{border-color:#b9c6f2}
+.his-panel{background:#fff;border:2px solid #E7EDF9;border-radius:8px;margin-top:10px;
+padding:4px 14px;max-height:420px;overflow:auto}
+.his-row{display:flex;align-items:center;gap:10px;padding:7px 0;
+border-bottom:1px solid #F0F1F4;font-size:12px;color:#34373d}
+.his-row:last-child{border-bottom:0}
+.his-time{color:#9aa0a8;white-space:nowrap}
+.his-price{color:var(--jd);font-weight:700;white-space:nowrap}
+.his-price s{color:#b6bbc3;font-weight:400;margin-left:4px}
+.his-ct{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#606266}
+@media(max-width:780px){.hisbox{margin-left:0;width:100%}.hisbox input{flex:1;width:auto}}
+
 .report-realtime{display:inline-flex;align-items:center;background:#fff;padding:6px 14px;
 margin:14px 0 4px;box-shadow:inset 2px 2px 3px 0 #e7eaee;border-radius:4px;font-size:13px;color:#555}
 .report-realtime .realtime{color:#f53245;font-weight:600;margin-right:10px}
@@ -188,8 +205,14 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
     <div class="screen-item">
       <div class="title">平台：</div>
       <ul id="plat"></ul>
+      <div class="hisbox">
+        <div class="title">历史价格跟踪：</div>
+        <input id="hisKw" placeholder="输入商品关键词，如：蓝月亮" autocomplete="off">
+      </div>
     </div>
   </div>
+
+  <div class="his-panel" id="hisPanel" style="display:none"></div>
 
   <div class="report-realtime">
     <span class="realtime">实时更新</span><span class="wire"></span>截止
@@ -373,6 +396,35 @@ kwInput.addEventListener('input', e=>{
 document.getElementById('btnSearch').onclick = ()=>{ kw = kwInput.value.trim(); render(true); };
 kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.trim(); render(true);} });
 
+// ---- 历史价格跟踪：按关键词搜近 7 天带价格的线报记录 ----
+const hisInput = document.getElementById('hisKw');
+const hisPanel = document.getElementById('hisPanel');
+let hisTimer;
+function renderHis(){
+  const k = hisInput.value.trim().toLowerCase();
+  if(!k){ hisPanel.style.display='none'; hisPanel.innerHTML=''; return; }
+  const rows = DEALS.filter(d=>{
+    if(!(d._couponAfterPrice || d.price)) return false;
+    return copyTextOf(d).toLowerCase().indexOf(k) >= 0;
+  }).slice(0, 40);  // DEALS 本身最新在前，截前 40 条即最近的价格记录
+  hisPanel.innerHTML = rows.length
+    ? rows.map(d=>{
+        const has = d._couponAfterPrice != null && d._couponAfterPrice !== '';
+        const p = has ? '到手 ¥'+esc(d._couponAfterPrice) : (d.price ? '¥'+esc(d.price) : '');
+        const old = (has && d.price && d.price > d._couponAfterPrice) ? '<s>¥'+esc(d.price)+'</s>' : '';
+        const ct = ((d.list && d.list[0] && d.list[0].content) || '').replace(/\\s+/g,' ').slice(0, 42);
+        return '<div class="his-row">'
+          + '<span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
+          + '<span class="his-time">'+esc((d.time||'').slice(5,16))+'</span>'
+          + '<span class="his-price">'+p+old+'</span>'
+          + '<span class="his-ct">'+esc(ct)+'</span>'
+          + '</div>';
+      }).join('')
+    : '<div class="his-row">没有匹配的历史价格记录（数据从 2026-09-06 起积累）</div>';
+  hisPanel.style.display = 'block';
+}
+hisInput.addEventListener('input', ()=>{ clearTimeout(hisTimer); hisTimer = setTimeout(renderHis, 200); });
+
 const listEl = document.getElementById('list');
 listEl.addEventListener('dblclick', e=>{
   if(e.target.closest('a')) return;
@@ -442,8 +494,11 @@ refreshData().then(()=>{ // 数据落定后同步顶部「截止」时间，别�
 """
 
 
+EMBED_MAX = 500  # 首屏只内嵌最新 500 条（其余走 /api/deals 加载），防 HTML 随 7 天数据无限变肥
+
+
 def build_html(deals, cfg, convert_stats):
-    data_json = json.dumps(deals, ensure_ascii=False).replace("</", "<\\/")
+    data_json = json.dumps(deals[:EMBED_MAX], ensure_ascii=False).replace("</", "<\\/")
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     ts_hm = time.strftime("%H:%M")
     return (TPL
