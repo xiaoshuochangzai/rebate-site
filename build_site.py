@@ -144,6 +144,16 @@ display:flex;align-items:center;justify-content:center}
 .pf.jd{background:var(--jd)}.pf.tb{background:var(--tb)}.pf.fz{background:var(--fz)}.pf.ot{background:#a6abb3}
 .reltime{color:#9aa0a8;font-size:12px;margin-left:2px}
 
+/* 淘宝卡：左内容右图片（学大淘客排版，有几张图用几张） */
+.tb-wrap{display:flex;flex:1;min-height:0}
+.tb-left{flex:1;min-width:0;display:flex;flex-direction:column;padding:11px 10px 8px 13px}
+.tb-right{width:92px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;
+background:#f7f8fa;border-left:1px solid #F0F1F4}
+.tb-right img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block}
+.tb-right .noimg{flex:1;min-height:60px;display:flex;align-items:center;justify-content:center;
+color:#c8ccd4;font-size:11px}
+@media(max-width:420px){.tb-right{width:70px}}
+
 .more{margin:26px auto 0;width:150px;height:34px;line-height:34px;text-align:center;color:#8d939b;
 font-size:13px;background:#fff;border-radius:17px;box-shadow:var(--shadow);cursor:pointer}
 .more:hover{color:var(--brand)}
@@ -200,7 +210,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 <script>
 let DEALS = __DATA__;
 const PAGE_SIZE = 60;
-let filter = 'all', kw = '', shown = 0;
+let filter = '2', kw = '', shown = 0;  // 默认京东（京东第一、淘宝第二，无「全部」）
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function rel(t){
   if(!t) return '';
@@ -245,10 +255,6 @@ function copyTextOf(d){
   return parts.join('\\n');
 }
 function cardHtml(d){
-  const img = (d.images && d.images.length)
-    ? '<img src="'+esc(d.images[0])+'" referrerpolicy="no-referrer" loading="lazy" alt="">'
-    : '<div class="noimg">暂无图片</div>';
-
   let priceHtml = '';
   if(d._couponAfterPrice){
     const old = (d.price && d.price > d._couponAfterPrice) ? '<s>¥'+esc(d.price)+'</s>' : '';
@@ -279,16 +285,33 @@ function cardHtml(d){
     }
   }
   const box = '<div class="content-box">'+(body.length?body.join(''):'<div class="ct">（无文案）</div>')+'</div>';
+  const info = '<div class="content-section-info">'
+    + '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
+    + '<span class="reltime">'+esc(rel(d.time))+'</span></div>'
+    + '</div>';
 
+  // 淘宝卡：左边线报内容、右边图片（有几张图用几张），学大淘客排版
+  if(d.platform === '1'){
+    const imgs = (d.images && d.images.length) ? d.images : [];
+    const right = imgs.length
+      ? imgs.map(u=>'<img src="'+esc(u)+'" referrerpolicy="no-referrer" loading="lazy" alt="">').join('')
+      : '<div class="noimg">暂无图片</div>';
+    return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'">'
+      + '<div class="tb-wrap">'
+      +   '<div class="tb-left">'+priceHtml+box+info+'</div>'
+      +   '<div class="tb-right">'+right+'</div>'
+      + '</div></div>';
+  }
+
+  // 京东等其他平台：上图下文
+  const img = (d.images && d.images.length)
+    ? '<img src="'+esc(d.images[0])+'" referrerpolicy="no-referrer" loading="lazy" alt="">'
+    : '<div class="noimg">暂无图片</div>';
   return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'">'
     + '<div class="image-section">'+img+'</div>'
     + '<div class="content-section">'
     +   '<div class="content-section-item">'
-    +     priceHtml + box
-    +     '<div class="content-section-info">'
-    +       '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
-    +       '<span class="reltime">'+esc(rel(d.time))+'</span></div>'
-    +     '</div>'
+    +     priceHtml + box + info
     +   '</div>'
     + '</div>'
     + '</div>';
@@ -333,9 +356,11 @@ function fallback(str, tip){
 }
 
 document.getElementById('plat').addEventListener('click', e=>{
-  const li = e.target.closest('li'); if(!li) return;
+  const li = e.target.closest('li'); if(!li || li.classList.contains('active')) return;
   document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
-  li.classList.add('active'); filter = li.dataset.p; render(true);
+  li.classList.add('active'); filter = li.dataset.p;
+  render(true);      // 先用现有数据立即渲染，避免白屏
+  refreshData();     // 切换分类 = 刷新（拉最新数据重绘当前平台）
 });
 const kwInput = document.getElementById('kw');
 let timer;
@@ -363,44 +388,42 @@ window.addEventListener('scroll', ()=>{
 });
 topBtn.onclick = ()=>window.scrollTo({top:0,behavior:'smooth'});
 
-// 平台筛选项：按数据中实际存在的平台动态生成（只上京东时就只剩「全部/京东」）
+// 平台筛选：京东第一、淘宝第二，不要「全部」分类
 const PNAME = {'1':'淘宝','2':'京东','3':'飞猪'};
-(function(){
-  const seen = {}, arr = [];
-  DEALS.forEach(d=>{ if(d.platform && !seen[d.platform]){ seen[d.platform]=1; arr.push(d.platform); } });
-  arr.sort();
-  document.getElementById('plat').innerHTML =
-    '<li class="active" data-p="all">全部</li>'
-    + arr.map(p=>'<li data-p="'+esc(p)+'">'+esc(PNAME[p]||p)+'</li>').join('');
-})();
+const PORDER = ['2','1'];
+function buildTabs(){
+  const seen = {};
+  DEALS.forEach(d=>{ if(d.platform) seen[d.platform]=1; });
+  const arr = PORDER.filter(p=>seen[p]);
+  Object.keys(seen).forEach(p=>{ if(arr.indexOf(p)<0) arr.push(p); });
+  document.getElementById('plat').innerHTML = arr.map(p=>
+    '<li data-p="'+esc(p)+'"'+(p===String(filter)?' class="active"':'')+'>'+esc(PNAME[p]||p)+'</li>').join('');
+}
+buildTabs();
 render(true);
 
-// 实时数据：内嵌数据只保证首屏秒开，加载后再从 KV 接口拉最新，
-// 有变化就整体替换重渲染（KV 由监控端直写，不经 CF 构建）
-(function(){
-  fetch('/api/deals?ts='+Date.now(), {cache:'no-store'})
+// 刷新 = 从 KV 接口拉最新数据、重绘当前平台（不整页 reload，不重置分类）
+function refreshData(){
+  return fetch('/api/deals?ts='+Date.now(), {cache:'no-store'})
     .then(r=>r.ok ? r.json() : null)
     .then(fresh=>{
-      if(!Array.isArray(fresh) || !fresh.length) return;
+      if(!Array.isArray(fresh) || !fresh.length) return false;
       const oldTop = DEALS.length ? String(DEALS[0].id) : '';
       const newTop = String(fresh[0].id||'');
-      const oldLen = DEALS.length, newLen = fresh.length;
-      if(newTop === oldTop && newLen === oldLen) return;  // 没变化不重绘
+      const changed = (newTop !== oldTop) || fresh.length !== DEALS.length;
       DEALS = fresh;
-      // 重建平台筛选项
-      const seen = {}, arr = [];
-      DEALS.forEach(d=>{ if(d.platform && !seen[d.platform]){ seen[d.platform]=1; arr.push(d.platform); } });
-      arr.sort();
-      document.getElementById('plat').innerHTML =
-        '<li class="active" data-p="all">全部</li>'
-        + arr.map(p=>'<li data-p="'+esc(p)+'">'+esc(PNAME[p]||p)+'</li>').join('');
+      buildTabs();
       render(true);
-      document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
-      const all = document.querySelector('#plat li[data-p="all"]');
-      if(all) all.classList.add('active');
+      return changed;
     })
-    .catch(()=>{});
-})();
+    .catch(()=>false);
+}
+document.getElementById('btnRefresh').onclick = function(){
+  const a = this; a.textContent = '刷新中…';
+  refreshData().then(c=>{ a.textContent='刷新'; toast(c?'已更新到最新线报 ✓':'已是最新'); });
+};
+// 首屏渲染后自动拉一次最新数据
+refreshData();
 </script>
 </body>
 </html>
