@@ -227,7 +227,15 @@ def normalize_jd_image(url):
 def _build_material(deal):
     """从好单库 deal 构造万能转链的输入文本：标题 + 商品链接。
     券链接不传，因为券不会被转链且会触发 failed 提示。"""
-    title = deal.get("title") or deal.get("short_title") or "京东商品"
+    title = deal.get("title") or deal.get("short_title") or ""
+    if not title:
+        # 好单库线报没有独立标题字段，用文案第一行当标题
+        for it in deal.get("list", []) or []:
+            c = (it.get("content") or "").strip()
+            if c:
+                title = c
+                break
+    title = title or "京东商品"
     lines = [title]
     for it in deal.get("list", []) or []:
         item_id = it.get("item_id") or ""
