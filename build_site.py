@@ -148,7 +148,9 @@ display:flex;align-items:center;justify-content:center}
 .tb-wrap{display:flex;flex:1;min-height:0}
 .tb-left{flex:1;min-width:0;display:flex;flex-direction:column;padding:11px 10px 8px 13px}
 .tb-right{width:92px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;
-background:#f7f8fa;border-left:1px solid #F0F1F4}
+background:#f7f8fa;border-left:1px solid #F0F1F4;
+max-height:196px;overflow:hidden;transition:max-height .3s}
+.report-item:hover .tb-right{max-height:1200px}  /* 悬停全展开，折叠幅度与左侧文案(196px)一致 */
 .tb-right img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block}
 .tb-right .noimg{flex:1;min-height:60px;display:flex;align-items:center;justify-content:center;
 color:#c8ccd4;font-size:11px}
