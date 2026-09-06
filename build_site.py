@@ -122,11 +122,6 @@ display:flex;flex-direction:column;overflow:hidden;transition:transform .26s,box
 color:#c8ccd4;font-size:12px}
 
 .content-section{position:relative;flex:1;display:flex;flex-direction:column}
-.turn-link{position:absolute;left:0;right:0;top:0;transform:translateY(-100%);height:38px;
-background:linear-gradient(90deg,#FF7D00 0%,#FF0A00 100%);color:#fff;font-size:15px;
-display:flex;justify-content:center;align-items:center;opacity:0;transition:opacity .25s;letter-spacing:1px}
-.report-item:hover .turn-link{opacity:.96}
-
 .content-section-item{padding:11px 13px 8px;flex:1;display:flex;flex-direction:column}
 .price{color:var(--jd);font-size:22px;font-weight:800;line-height:1.2;margin-bottom:6px}
 .price i{font-size:13px;font-style:normal;font-weight:600}
@@ -271,7 +266,6 @@ function cardHtml(d){
   return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'">'
     + '<div class="image-section">'+img+'</div>'
     + '<div class="content-section">'
-    +   '<div class="turn-link">一键复制文案</div>'
     +   '<div class="content-section-item">'
     +     priceHtml + box
     +     '<div class="content-section-info">'
