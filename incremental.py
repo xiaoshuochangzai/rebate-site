@@ -184,8 +184,9 @@ def main():
                     if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
                         deals.insert(0, conv)
                         have_ids.add(wid)
-                        deploy(deals, f"data: new wire {wid}")
-                        log(f"  已转链并上线 {wid}")
+                        persist(deals)
+                        mark_dirty(f"new wire {wid}")
+                        log(f"  已转链并落盘 {wid}（待合并推送）")
                     else:
                         pending = load_json(PENDING_FILE, [])
                         if not any(str(p.get("id")) == wid for p in pending):
@@ -212,8 +213,9 @@ def main():
                         have_ids.add(wid)
                         pending = [p for p in pending if str(p.get("id")) != wid]
                         save_json(PENDING_FILE, pending)
-                        log(f"补转成功并上线 {wid}")
-                        deploy(deals, f"fix: 补转 {wid}")
+                        log(f"补转成功并落盘 {wid}（待合并推送）")
+                        persist(deals)
+                        mark_dirty(f"fix: 补转 {wid}")
                     else:
                         pending = pending[1:] + [pending[0]]
                         save_json(PENDING_FILE, pending)
@@ -222,6 +224,9 @@ def main():
                     log(f"补转异常 {wid}：{str(e)[:80]}")
         except Exception as e:
             log(f"本轮异常：{str(e)[:150]}")
+
+        # 防抖推送：攒够 45s 的变更合并推一次，避免 CF Pages 构建排队
+        flush_if_due(force=once)
 
         if once:
             break
