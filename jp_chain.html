@@ -1,0 +1,541 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>小工具 - 京品库</title>
+    <meta name="keywords" content="京品库,京品联盟,京东联盟,京挑客,京粉,京东发单,发单机器人,京东推广,京东优惠券" />
+    <meta name="description" content="京品库致力于为广大京东联盟的挑客提供全网最优质精选领券优惠券,全天实时直播独家给力一手单,同时拥有最人性化发品体验,最全的API的接口,配合最优质的推客系统及工具软件,打造京东导购新生态." />
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" media="screen" />
+    <link rel="stylesheet" type="text/css" href="/static/js/ext/layui/css/layui.css?tid=1774244995" />
+    <script type="text/javascript" src="/static/js/ext/layui/layui.js?tid=1774244995"></script>
+
+    <link href="/static/style/header-footer.css?tid=1774244995" rel="stylesheet" type="text/css" />
+    <link href="/static/style/base.css?tid=1774244995" rel="stylesheet" type="text/css" />
+    <link href="/static/style/iconfont.css?tid=1774244995" rel="stylesheet" type="text/css" />
+    <link rel="stylesheet" href="/static/style/quattro.css?tid=1774244995">
+    <link rel="stylesheet" href="/static/style/cancel_login.css?tid=1774244995">
+    <script src="/static/js/jquery-3.5.1.min.js"></script>
+    <script src="/static/js/clipboard.js"></script>
+    <script src="/static/js/jquery.lazyload.js"></script>
+
+    <script type="text/javascript" src="/static/js/quattro.js?tid=1774244995"></script>
+    <script src="/static/js/vue.js?tid=1774244995"></script>
+    <script type="text/javascript" src="/static/lazyload/vue-lazyload.js?tid=1774244995"></script>
+    <script type="text/javascript" src="/static/js/coupon.js?tid=1774244995"></script>
+    <script type="text/javascript" src="/static/lazyload/index.css?tid=1774244995"></script>
+    <!-- 引入组件库 -->
+    <script type="text/javascript" src="/static/lazyload/index.js?tid=1774244995"></script>
+    <script type="text/javascript" src="/static/js/app.js?tid=1774244995"></script>
+    <link href="/static/style/header5.css?tid=1774244995" rel="stylesheet" type="text/css" />
+    <link rel="stylesheet" href="/static/style/fenxiaofont/iconfont.css?tid=1774244995">
+</head>
+
+<body>
+    <!-- <div class="flashPitch">
+        <div class="flashScreen"> </div>
+    </div> -->
+    <div class="headerItem">
+        <div class="header" style="height: 36px;">
+            <div class="header-content">
+                <a href="/index/index.do" class="header-left" style="width: 180px;">京品库 大数据智能选品平台</a>
+                <div class="header-right">
+                    <ul>
+                        <li><a href="/index/telegram.do">京品线报</a></li>
+                        <li>|</li>
+                        <li class="tkfuPopup">
+                            <a href="/tools/chain_link.do" style="display: flex;">
+                                <span>挑客服务</span>
+                                <div id="tkfu_icon">
+                                    <span class="iconfont">
+                                        &#xe688;
+                                    </span>
+                                </div>
+                            </a>
+                            <div class="head-popup-list">
+                                <div>
+                                    <a href="/tools/chain_link.do">小工具</a>
+                                </div>
+                           
+                                <div>
+                                    <a class="go_yfd" href="#">云发单</a>
+                                </div>
+                            </div>
+                        </li>
+                        
+                    </ul>
+                        <a href="/auth/login.do" style="width: 84px;margin-left: auto;color:#FF5028"><span class="good-header-land">登录</span></a>
+    <script>
+    function headImageOver(e) {
+        let userOptions = document.querySelector(".userOptions")
+        userOptions.style.transform = "translateY(0%)"
+        userOptions.style.opacity = 1
+        if (document.getElementById("headImageIcon")) {
+            document.getElementById("headImageIcon").style.transform = "rotate(180deg)"
+        }
+    }
+    function headImageOut(e) {
+        let userOptions = document.querySelector(".userOptions")
+        userOptions.style.transform = "translateY(-120%)"
+        userOptions.style.opacity = 0
+        if (document.getElementById("headImageIcon")) {
+            document.getElementById("headImageIcon").style.transform = "rotate(0deg)"
+        }
+    }
+    if (document.querySelector(".userPhoto")) {
+        document.querySelector(".userPhoto").addEventListener("mouseover", headImageOver)
+        document.querySelector(".userPhoto").addEventListener("mouseout", headImageOut)
+    }
+
+    if (document.querySelector(".userOptions")) {
+        document.querySelector(".userOptions").addEventListener("mouseover", headImageOver)
+        document.querySelector(".userOptions").addEventListener("mouseout", headImageOut)
+    }
+</script>
+                </div>
+            </div>
+        </div>
+
+        <div class="second-header">
+            <div class="content">
+                <div class="second-header_logo">
+                    <a href="/"><img src="/static/images/jingpinku_logo1.png" class="second_logo"></a>
+                </div>
+                <div class="searchNav">
+                    <form action='/index/search.do' method="GET" id="searchs">
+                        <input type="text" class="search" placeholder="请输入商品关键词/商品链接" name="keyword"
+                            value="" name="keyword" />
+                        <div class="searchHarp"></div>
+                    </form>
+                    <a class="clicsosuo" onclick="$('#searchs').submit()"><i class="iconfont iconsousuo"></i></a>
+                    <div class="history">
+                        <ul>
+                                                        <li><a href="/index/search/keyword/%E5%8F%A3%E7%BD%A9.do">口罩</a></li>
+                                                        <li><a href="/index/search/keyword/%E5%A4%96%E5%A5%97.do">外套</a></li>
+                                                        <li><a href="/index/search/keyword/%E5%8D%AB%E8%A1%A3.do">卫衣</a></li>
+                                                        <li><a href="/index/search/keyword/%E7%A7%8B%E8%A3%85.do">秋装</a></li>
+                                                        <li><a href="/index/search/keyword/%E4%BF%9D%E6%B9%BF.do">保湿</a></li>
+                                                        <li><a href="/index/search/keyword/%E8%A1%A5%E6%B0%B4.do">补水</a></li>
+                                                        <li><a href="/index/search/keyword/%E7%BA%B8%E5%B7%BE.do">纸巾</a></li>
+                                                        <li><a href="/index/search/keyword/%E9%9E%8B%E5%AD%90.do">鞋子</a></li>
+                                                        <li><a href="/index/search/keyword/%E4%BF%9D%E6%B8%A9%E6%9D%AF.do">保温杯</a></li>
+                                                        <li><a href="/index/search/keyword/%E5%9B%9B%E4%BB%B6%E5%A5%97.do">四件套</a></li>
+                                                    </ul>
+                    </div>
+                </div>
+                <div class="right"> <img src="https://images.jingpinku.com/9b6e0202012311132305606.png">
+                </div>
+            </div>
+        </div>
+
+        <div class="nav">
+            <div class="nav-box">
+                <ul>
+                    <li class="navItem ">
+                        <a href="/index/telegram.do">京品线报</a>
+                    </li>
+                    <!-- <li class="navItem ">
+                        <a href="/index/coupon.do">领券榜
+                            <div class="headerHotGoods">
+                                <img src="/static/images/hot_v1.png" alt="" style="width: 100%;" />
+                            </div>
+                        </a>
+                    </li> -->
+                    <li class="navItem ">
+                        <a href="/index/brand.do">京选品牌</a>
+                    </li>
+                    <li class="navItem ">
+                        <a href="/index/goods.do">商品库</a>
+                    </li>
+                    <li class="navItem tkpopup  navCheckeds ">
+                        <a href="/tools/chain_link.do">挑客工具
+                            <div class="headerHotGoods">
+                                <img src="/static/images/new_blue.png" alt="" style="width: 100%;" />
+                            </div>
+                        </a>
+
+                        <div class="nav-popup-list">
+                            <!-- <div>
+                                <a href="/tools/chain_link.do">智能转链</a>
+                            </div>
+                            <div>
+                                <a href="/tools/marketing.do">合成营销图</a>
+                            </div>
+                            <div>
+                                <a href="/tools/marketing.do">微信文案编辑</a>
+                            </div>
+                            <div>
+                                <a href="/tools/more_chain.do">批量转链</a>
+                            </div>
+                            <div>
+                                <a href="/tools/coupons.do">优惠券查询</a>
+                            </div> -->
+                            <div>
+                                <a href="/tools/chain_link.do">小工具</a>
+                            </div>
+                            <!-- 
+                            <div>
+                                <a class="go_yfd" href="#">云发单</a>
+                            </div> -->
+                        </div>
+                    </li>
+
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="cancel_login">
+        <div class="cancel_login_window">
+            <div class="cancel_login_title">是否退出登录？</div>
+            <div class="cancel_login_operate">
+                <a href="https://www.jingpinku.com/auth/logout.do" class="cancel_login_exit">退出</a>
+                <div class="cancel_login_cancel">取消</div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        let isOpen = false
+        let openedId = ""
+        let selectedHeaderItemId = ""
+        let isLogin = true
+        let userCenterPositon = ""
+        let currentMouseoutE = null
+        function hiddenSelectOptions(id) {
+            document.querySelector(".itemOptions").style.transform = "translateY(-100%)"
+            isOpen = false
+            openedId = ""
+        }
+        function showSelectOptions(id) {
+            // 把 innerHTML 插入下拉菜单中
+            document.querySelector(".itemOptions").innerHTML = divData[id]
+            // 展示下拉菜单
+            document.querySelector(".itemOptions").style.transform = "translateY(20%)"
+            openedId = id
+            isOpen = true
+            // 添加点击事件
+        }
+        function openOrHiddenOptions(e, delay) {
+            let navItemNode = e.target.parentNode
+            if (navItemNode.className == "iconDiv") {
+                return
+            }
+            let navItemSpan = navItemNode.children[0]
+            cancelSelectedItemStyle()
+            if (navItemNode.children.length > 1) {
+                let navItemArrow = navItemNode.children[1]
+
+                if (navItemArrow.style.transform == "rotate(180deg)") {
+                    // 关闭下拉菜单
+                    navItemArrow.style.transform = "rotate(0deg)"
+                    hiddenSelectOptions(navItemSpan.id)
+                    if (!delay) {
+                        cancelSelectedStyle(navItemSpan, navItemArrow)
+                    }
+                } else {
+                    // 打开下拉菜单
+                    if (isOpen) {
+                        // 有其他下拉菜单打开,把已经打开的关闭
+                        document.querySelector("#" + openedId).click()
+                        // .3s 后打开当前菜单
+                        addSelectedStyle(navItemSpan, navItemArrow)
+                        openOrHiddenOptions(e, true)
+                    } else {
+                        navItemArrow.style.transform = "rotate(180deg)"
+                        showSelectOptions(navItemSpan.id)
+                        addSelectedStyle(navItemSpan, navItemArrow)
+                    }
+
+                }
+            } else {
+                // isOpen = false
+
+                if (isOpen) {
+                    // 有下拉框打开，把他关闭
+                    document.querySelector("#" + openedId).click()
+                }
+                // 给没有下拉框的菜单添加样式
+                addSelectedStyle(navItemSpan)
+                cancelSelectedItemStyle()
+                selectedHeaderItemId = navItemSpan.id
+            }
+        }
+        // 添加被选中的样式
+        function addSelectedStyle(element1, element2) {
+            if (element1.parentNode.className == "headerNavItem") {
+                return
+            }
+            element1.style.borderBottom = "2px solid #FF5028"
+            element1.style.color = "#FF5028"
+            if (!element2) {
+                return
+            }
+            element2.style.color = "#FF5028"
+        }
+        function cancelSelectedStyle(element1, element2) {
+            element1.style.border = ""
+            element1.style.color = "#606266"
+            if (!element2) {
+                return
+            }
+            element2.style.color = "#606266"
+        }
+        function cancelSelectedItemStyle() {
+            if (selectedHeaderItemId) {
+                cancelSelectedStyle(document.querySelector("#" + selectedHeaderItemId))
+                selectedHeaderItemId = ""
+            }
+        }
+
+
+        function headImageOver1(e) {
+            let nav_popup_list = document.querySelector(".nav-popup-list")
+            nav_popup_list.style.display = 'block';
+        }
+        function headImageOut1(e) {
+            let nav_popup_list = document.querySelector(".nav-popup-list")
+            nav_popup_list.style.display = 'none';
+        }
+
+        function headImageOver2(e) {
+            let head_popup_list = document.querySelector(".head-popup-list")
+            // head_popup_list.style.transform = "translateY(0%)"
+            // head_popup_list.style.opacity = 1
+
+            head_popup_list.style.display = 'block';
+
+            if (document.getElementById("tkfu_icon")) {
+                document.getElementById("tkfu_icon").style.transform = "rotate(180deg)"
+            }
+        }
+        function headImageOut2(e) {
+            let head_popup_list = document.querySelector(".head-popup-list")
+            // head_popup_list.style.transform = "translateY(-120%)"
+            // head_popup_list.style.opacity = 0
+            head_popup_list.style.display = 'none';
+
+            if (document.getElementById("tkfu_icon")) {
+                document.getElementById("tkfu_icon").style.transform = "rotate(0deg)"
+            }
+        }
+
+
+        (function () {
+
+
+            if (document.querySelector(".tkpopup")) {
+                document.querySelector(".tkpopup").addEventListener("mouseover", headImageOver1)
+                document.querySelector(".tkpopup").addEventListener("mouseout", headImageOut1)
+            }
+
+            if (document.querySelector(".tkfuPopup")) {
+                document.querySelector(".tkfuPopup").addEventListener("mouseover", headImageOver2)
+                document.querySelector(".tkfuPopup").addEventListener("mouseout", headImageOut2)
+            }
+        })()
+        // 跳转云发单
+        $('.go_yfd').on('click', function () {
+            if (document.querySelector(".good-header-land")) {
+                location.href = "https://www.jingpinku.com/auth/login.do"
+                return
+            }
+            $.get("https://www.jingpinku.com/index/get_cloud_session.do", function (resp) {
+                if (resp.code == 200) {
+                    window.open(resp.data, '_blank')
+                } else {
+                    $(".cancel_login_").show()
+                }
+            });
+        })
+ 
+    </script>
+<link rel="stylesheet" href="/static/style/tools.css?tid=1774244995">
+<div class="subject">
+    <div class="topImg">
+        <div class="topImgItem">
+        </div>
+    </div>
+    <div class="toolTitle">
+    <a href="/tools/chain_link.do" class="transferrin  checked_active  ">智能转链</a>
+    <a href="/tools/atip_link.do" class="transferrin  ">线报转链</a>
+    <a href="/tools/marketing.do" class="checkCoupons ">合成营销图</a>
+    <a href="/tools/weixinword.do" class="checkCoupons ">微信文案编辑</a>
+    <a href="/tools/more_chain.do" class="checkCoupons ">批量转链</a>
+    <a href="/tools/coupons.do" class="checkCoupons ">优惠券查询</a>
+    <!-- <a href="/tools/more_commission.do" class="checkCoupons ">佣金查询</a> -->
+
+    <!-- <a href="/tools/twotoone.do" class="checkCoupons ">解析二合一</a> -->
+    <!-- <a href="/tools/material.do" class="checkCoupons ">商品素材</a> -->
+</div>
+    <div class="toolContent">
+        <textarea class="toolContent_left" placeholder="请输入原始文案"></textarea>
+        <div class="toolContent_center">
+            <div class="transferrinText">
+                                    <input type="number" class="toolRid" placeholder="请填写rid" />
+                            </div>
+            <div class="transferrinButton">
+                <i class="iconfont iconxiaogongju-zhuanlian"></i><span class="transferrinButtonItem">转链</span>
+            </div>
+            <div class="copyButton" id="copy" data-clipboard-target="#foo">
+                <i class="iconfont iconxiaogongju-fuzhi"></i><span class="copyButtonItem">复制</span>
+            </div>
+            <div class="emptyButton">
+                <i class="iconfont iconxiaogongju-qingkong"></i><span class="emptyButtonItem">清空</span>
+            </div>
+        </div>
+        <pre class="toolContent_right" id="foo"></pre>
+    </div>
+</div>
+<div id="goodcover"></div>
+<div class="goPersonal">
+    <div class="goPersonalTitle">前往个人中心填写联盟id</div>
+    <div class="bottom-choose">
+        <a href="https://member.jingpinku.com/index/info.do"><button class="submitButton">立即前往</button></a>
+        <button class="cancelButton">取消</button>
+    </div>
+</div>
+<!-- <script type="text/javascript" src="/static/js/md5.js?tid=1774244995"></script> -->
+<script type="text/javascript" src="/static/js/tools.js?tid=1774244995"></script>
+<script>
+// 点击清空
+$('.emptyButton').on('click', function () {
+    $(".toolContent_left").val('');
+    $(".toolRid").val('');
+    $(".toolContent_right")[0].innerHTML = ''
+})
+    //复制文案
+    $("#copy").on("click", function () {
+        let value = $(".toolContent_right")[0].innerHTML;
+        if (value) {
+            let clipboard = new Clipboard("#copy");
+            clipboard.on('success', function (e) {
+                Quattro.toast('msg', '复制成功', {
+                    'time': 2,
+                    'unique': 'toast'
+                });
+                e.clearSelection();
+                clipboard.destroy();
+            });
+            clipboard.on('error', function (e) {
+                console.error('Action:', e.action);
+                console.error('Trigger:', e.trigger);
+                return false;
+            });
+        } else {
+            Quattro.toast('msg', '请先转链', {
+                'time': 2,
+                'unique': 'toast'
+            });
+        }
+    })
+</script>
+<div class="footer">
+    <div class="footer-box">
+        <div class="footer-box-top">
+            <div class="foot_title">
+                <div class="foot_title_pic">
+                    <i class="iconfont icondashujuzhinengxuanpin"></i>
+                </div>
+                <div class="foot_title_name">
+                    大数据智能选品
+                </div>
+            </div>
+            <div class="foot_title">
+                <div class="foot_title_pic">
+                    <i class="iconfont iconyizhanshiyingxiao"></i>
+                </div>
+                <div class="foot_title_name">
+                    一站式营销
+                </div>
+            </div>
+            <div class="foot_title">
+                <div class="foot_title_pic">
+                    <i class="iconfont iconquanfangweibianxian"></i>
+                </div>
+                <div class="foot_title_name">
+                    全方位变现
+                </div>
+            </div>
+        </div>
+        <div class="footer-line"></div>
+        <div class="footer-box-center">
+            <div class="footer-box-center-left">
+                <ul>
+                    <li class="footer-box-center-left_title"><a href="https://www.jingpinku.com/index/goods.do">商品库</a></li>
+                    <li class="footer-box-center-left_titleItem"> <a href="https://www.jingpinku.com/index/telegram.do">京品线报</a></li>
+                    <li class="footer-box-center-left_titleItem"><a href="https://www.jingpinku.com/index/coupon.do">领劵榜</a></li>
+                </ul>
+                <ul>
+                    <li class="footer-box-center-left_title">营销中心</li>
+                    <li class="footer-box-center-left_titleItem"><a href="https://www.jingpinku.com/index/telegram.do">京品线报</a></li>
+                </ul>
+                <!-- <ul>
+                    <li class="footer-box-center-left_title deve">API开放平台</li>
+                    <li class="footer-box-center-left_titleItem"><a href="/openapi/detail/id/15.do">万能转链</a> </li>
+                    <li class="footer-box-center-left_titleItem"><a href="/openapi/detail/id/16.do">高效转链</a></li>
+                    <li class="footer-box-center-left_titleItem"><a href="/openapi/detail/id/13.do">关键词搜索</a></li>
+                </ul> -->
+                <ul>
+                    <li class="footer-box-center-left_title">帮助中心</li>
+                    <li class="footer-box-center-left_titleItem"><a href="https://www.jingpinku.com/help/index.do">常见问题</a> </li>
+                </ul>
+            </div>
+            <div class="footer-box-center-right">
+                <div class="footer-box-center-right-left">
+                    <img src="/static/images/2weima.png">
+                </div>
+                <div class="footer-box-center-right-right">
+                    <div class="footer-box-center-right-right-text">
+                        若您想了解更多我们公司，可以通过以下方式与我们取得联系，我们会为您详细解答！
+                    </div>
+                    <div class="footer-box-center-right-right-icon">
+                        <a href="tel:18052538205"><i class="iconfont icondianhualianxifangshi"></i></a>
+                        <a target="_blank" href="http://wpa.qq.com/msgrd?v=3&uin=2996423653&site=qq&menu=yes"><i
+                                class="iconfont iconqq"></i></a>
+                        <i class="iconfont iconweixin"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="footer-box-bottom">
+            <div class="footer-box-bottom-text1"> 公司简介 &nbsp; &nbsp;
+                &nbsp;| &nbsp; &nbsp; &nbsp; <a href="javascript:void(0);">联系我们</a>&nbsp;&nbsp;&nbsp;| &nbsp;
+                &nbsp;&nbsp; <a href="javascript:void(0);">投诉建议</a> &nbsp; &nbsp;&nbsp; | &nbsp; &nbsp;&nbsp; <a href="javascript:void(0);">站点地图</a>
+            </div>
+            <div class="footer-box-bottom-text2">京品库版权所有 2019-2026 &nbsp;
+                <a href="https://beian.miit.gov.cn/" target="_blank">苏ICP备2024077937号-4</a>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="sidebar">
+    <div class="sidebar-backtop">
+        <i class="iconfont iconcebianlan-01"></i>
+    </div>
+    <a href="http://wpa.qq.com/msgrd?v=3&uin=2996423653&site=qq&menu=yes" target="_blank" rel="noopener noreferrer">
+        <div class="sidebar-service">
+            <i class="iconfont iconcebianlan-05"></i>
+        </div>
+    </a>
+</div>
+</body>
+<script>
+    $('.deve').click(function () {
+        Quattro.toast('msg', '正在开发中~！', {
+            'time': 2,
+            'unique': 'toast'
+        });
+    })
+
+    var _hmt = _hmt || [];
+    (function() {
+      var hm = document.createElement("script");
+      hm.src = "https://hm.baidu.com/hm.js?5ee0f0322a6fbfb5000666349f26d43b";
+      var s = document.getElementsByTagName("script")[0]; 
+      s.parentNode.insertBefore(hm, s);
+    })();
+</script>
+</html>

@@ -36,9 +36,13 @@ def find_chrome():
     return None
 
 
+# 直连 opener：本机调试端口(9222)绝不能走系统/环境代理，否则被劫持返回 502
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def is_running(port=PORT, timeout=2):
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
+        with _OPENER.open(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
             return json.loads(r.read().decode())
     except Exception:
         return None
@@ -81,7 +85,7 @@ def ensure_browser(headless=False):
 
 
 def targets(port=PORT):
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=5) as r:
+    with _OPENER.open(f"http://127.0.0.1:{port}/json/list", timeout=5) as r:
         return json.loads(r.read().decode())
 
 

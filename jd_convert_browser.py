@@ -7,6 +7,7 @@
 """
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -23,8 +24,22 @@ except Exception:  # pragma: no cover
 _CDP = None
 
 
+def _kill_bot_browser():
+    """只杀带 jd-bot-profile 的浏览器进程（不动用户主浏览器）。"""
+    if os.name != "nt":
+        return
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+          "Where-Object { $_.CommandLine -like '*jd-bot-profile*' } | "
+          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                       capture_output=True, timeout=30)
+    except Exception:
+        pass
+
+
 def _get_cdp():
-    """拿到专用浏览器的 CDP 连接（带复用与失效重连）。"""
+    """拿到专用浏览器的 CDP 连接（带复用、失效重连、通道僵死自愈）。"""
     global _CDP
     if jd_bot is None:
         return None
@@ -33,13 +48,29 @@ def _get_cdp():
             _CDP.evaluate("1", timeout=10)
             return _CDP
         except Exception:
+            try:
+                _CDP.close()
+            except Exception:
+                pass
             _CDP = None
     try:
         if not jd_bot.is_running():
-            return None
-        cdp, _t = jd_bot.connect_browser()
-        _CDP = cdp
-        return _CDP
+            jd_bot.launch()
+            time.sleep(3)
+        try:
+            cdp, _t = jd_bot.connect_browser()
+            _CDP = cdp
+            return _CDP
+        except Exception:
+            # 调试通道被挤死/浏览器僵死：重启专用浏览器再连一次（登录态在 profile 里不丢）
+            _kill_bot_browser()
+            time.sleep(2)
+            if not jd_bot.launch():
+                return None
+            time.sleep(3)
+            cdp, _t = jd_bot.connect_browser()
+            _CDP = cdp
+            return _CDP
     except Exception:
         return None
 
@@ -185,15 +216,35 @@ def convert_text(material_text, timeout=30):
     """把一段线报文本送进万能转链，返回 ConvertSuperLink 解析后的 data 字段。
 
     驱动方式：优先 CDP 专用浏览器（不干扰用户），失败才用中继续航。
+    CDP 通道僵死时自动重启专用浏览器再试一次（登录态在 profile 不丢）。
     """
+    global _CDP
     js = CONVERT_JS.replace("__TEXT__", json.dumps(material_text, ensure_ascii=False))
+    val = None
     cdp = _get_cdp()
     if cdp is not None:
         try:
             val = cdp.evaluate(js, timeout=max(timeout, 60))
         except Exception as e:
-            return {"ok": False, "msg": "专用浏览器转链异常：" + str(e)[:200]}
-    else:
+            # 通道已死：重启浏览器自愈后重试一次
+            try:
+                cdp.close()
+            except Exception:
+                pass
+            _CDP = None
+            _kill_bot_browser()
+            time.sleep(2)
+            if jd_bot is not None and jd_bot.launch():
+                time.sleep(3)
+                cdp = _get_cdp()
+                if cdp is not None:
+                    try:
+                        val = cdp.evaluate(js, timeout=max(timeout, 60))
+                    except Exception as e2:
+                        return {"ok": False, "msg": "专用浏览器转链异常(自愈后仍失败)：" + str(e2)[:200]}
+            else:
+                return {"ok": False, "msg": "专用浏览器转链异常：" + str(e)[:200]}
+    if val is None and cdp is None:
         _ensure_jd_tab()
         res = relay_drive.evaluate(js, timeout=timeout)
         if not res.get("success"):

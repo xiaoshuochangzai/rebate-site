@@ -19,11 +19,12 @@ import sys
 import time
 
 import build_site
-import jd_convert_browser as jd_convert
+import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.join(BASE_DIR, "site")
 SEEN_FILE = os.path.join(BASE_DIR, "seen_ids.json")
+PENDING_FILE = os.path.join(BASE_DIR, "pending.json")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
 
 
@@ -151,44 +152,49 @@ def main():
                 title = next((x.get("content") for x in d.get("list", []) if x.get("content")), "")
                 log(f"新线报 {wid} | {title[:30]}")
 
-                # 先原文入库并部署一次，保证内容不丢
-                deals.insert(0, d)
-                have_ids.add(wid)
-                deploy(deals, f"data: new wire {wid}")
-
-                # 再转链；成功则更新后重新部署
+                # Boss 红线：没转上链的绝不上站。先转链，成功才入库部署
                 try:
                     out, st = jd_convert.convert_all_browser([d], cfg)
                     for k, v in st.items():
                         STATE[k] = STATE.get(k, 0) + v
                     conv = out[0] if out else d
-                    for i, cur in enumerate(deals):
-                        if str(cur.get("id")) == wid:
-                            deals[i] = conv
-                            break
-                    got = next((it.get("url") for it in conv.get("list", []) if it.get("url")), "")
-                    log(f"  转链{'成功' if conv.get('_formatContext') else '失败'} {got[:48]}")
-                    deploy(deals, f"data: convert {wid}")
+                    if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+                        deals.insert(0, conv)
+                        have_ids.add(wid)
+                        deploy(deals, f"data: new wire {wid}")
+                        log(f"  已转链并上线 {wid}")
+                    else:
+                        pending = load_json(PENDING_FILE, [])
+                        if not any(str(p.get("id")) == wid for p in pending):
+                            pending.append(d)
+                            save_json(PENDING_FILE, pending)
+                        log(f"  转链失败，进待转队列（{len(pending)} 条），不上站")
                 except Exception as e:
-                    log(f"  转链异常：{str(e)[:100]}")
+                    pending = load_json(PENDING_FILE, [])
+                    if not any(str(p.get("id")) == wid for p in pending):
+                        pending.append(d)
+                        save_json(PENDING_FILE, pending)
+                    log(f"  转链异常，进待转队列：{str(e)[:80]}")
 
-            # 自动补转：每轮最多重试 1 条历史未转上链的（风控恢复后自动补齐）
-            unconv = [d for d in deals if not any(it.get("converted") for it in d.get("list", []))]
-            if unconv:
-                d = unconv[0]
+            # 自动补转：每轮从待转队列取 1 条重试，转上链才入库部署
+            pending = load_json(PENDING_FILE, [])
+            if pending:
+                d = pending[0]
                 wid = str(d.get("id"))
                 try:
                     out, st = jd_convert.convert_all_browser([d], cfg)
                     conv = out[0] if out else d
-                    if conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
-                        for i, cur in enumerate(deals):
-                            if str(cur.get("id")) == wid:
-                                deals[i] = conv
-                                break
-                        log(f"补转成功 {wid}")
+                    if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+                        deals.insert(0, conv)
+                        have_ids.add(wid)
+                        pending = [p for p in pending if str(p.get("id")) != wid]
+                        save_json(PENDING_FILE, pending)
+                        log(f"补转成功并上线 {wid}")
                         deploy(deals, f"fix: 补转 {wid}")
                     else:
-                        log(f"补转仍失败 {wid}（京东风控未恢复，下轮再试）")
+                        pending = pending[1:] + [pending[0]]
+                        save_json(PENDING_FILE, pending)
+                        log(f"补转仍失败 {wid}（队列轮转，共 {len(pending)} 条待转）")
                 except Exception as e:
                     log(f"补转异常 {wid}：{str(e)[:80]}")
         except Exception as e:
