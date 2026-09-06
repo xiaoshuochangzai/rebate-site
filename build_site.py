@@ -63,7 +63,7 @@ TPL = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>好价线报 · 实时更新</title>
-<meta name="description" content="京东/淘宝/飞猪实时优惠线报，每小时自动更新">
+<meta name="description" content="京东实时优惠线报，每小时自动更新，复制文案即可发单">
 <style>
 :root{--bg:#f4f6fa;--card:#fff;--text:#23262b;--sub:#9aa0a8;--line:#eef0f4;
 --jd:#E12319;--tb:#ff5000;--fz:#ff8f1f;--brand:#3C4BEE;--shadow:0 10px 30px 0 rgba(17,55,178,.09)}
