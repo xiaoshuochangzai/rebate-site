@@ -76,6 +76,17 @@ def deploy(deals, tag):
     return ok
 
 
+def has_link(deal):
+    """判定线报是否含商品/券链接。纯文字、无任何链接的（如「促销取消了，先忽略」）
+    对导购无意义，应忽略且不收录。"""
+    for it in deal.get("list", []) or []:
+        for key in ("item_id", "coupon_url", "content"):
+            v = it.get(key) or ""
+            if isinstance(v, str) and v.startswith("http"):
+                return True
+    return False
+
+
 def fetch_latest(cfg, pages=2):
     """抓最新若干页，返回 [(wire_id, normalize后的deal)]，按时间正序。"""
     out, seen = [], set()
@@ -91,7 +102,8 @@ def fetch_latest(cfg, pages=2):
                 continue
             seen.add(wid)
             d = build_site.normalize(it)
-            if str(d.get("platform")) == "2":   # 只要京东
+            # 只要京东，且必须带链接（纯文字无链接的直接忽略）
+            if str(d.get("platform")) == "2" and has_link(d):
                 out.append(d)
         time.sleep(0.4)
     out.sort(key=lambda d: d.get("time", ""))
@@ -112,7 +124,7 @@ def main():
     cfg = load_json(os.path.join(BASE_DIR, "config.json"), {})
     cfg.setdefault("crawl", {}).setdefault("page_size", 20)
 
-    deals = load_json(os.path.join(SITE_DIR, "deals.json"), [])
+    deals = [d for d in load_json(os.path.join(SITE_DIR, "deals.json"), []) if has_link(d)]
     have_ids = {str(d.get("id")) for d in deals}
     seen = set(load_json(SEEN_FILE, []))
 
