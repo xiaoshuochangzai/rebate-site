@@ -263,7 +263,39 @@ def acquire_single_instance():
     atexit.register(lambda: os.path.exists(LOCK_FILE) and os.remove(LOCK_FILE))
 
 
+class _Tee:
+    """同时写 stdout 和文件（计划任务/pythonw 后台跑时日志落 monitor_log.txt）。"""
+    def __init__(self, *fs):
+        self.fs = fs
+
+    def write(self, s):
+        for f in self.fs:
+            try:
+                f.write(s)
+                f.flush()
+            except Exception:
+                pass
+
+    def flush(self):
+        for f in self.fs:
+            try:
+                f.flush()
+            except Exception:
+                pass
+
+
 def main():
+    # 后台运行（计划任务/pythonw 无控制台）：stdout 可能为 None，日志兜底写文件
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    try:
+        _logf = open(os.path.join(BASE_DIR, "monitor_log.txt"), "a", encoding="utf-8", buffering=1)
+        sys.stdout = _Tee(sys.stdout, _logf)
+        sys.stderr = _Tee(sys.stderr, _logf)
+    except Exception:
+        pass
     acquire_single_instance()
     args = sys.argv[1:]
     once = "--once" in args
