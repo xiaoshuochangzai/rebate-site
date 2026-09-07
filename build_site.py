@@ -562,6 +562,32 @@ def build_html(deals, cfg, convert_stats):
             .replace("__TS__", ts))
 
 
+def merge_with_existing(fetched, existing_path=None):
+    """fetched（今日抓取）与存量 deals.json 按 id 合并：存量的已转链条目
+    （带 _originalContext/_formatContext/converted 标记）优先保留，防止
+    直跑 main() 时抓取不完整把历史清空。返回合并后的全量列表（时间倒序）。"""
+    path = existing_path or os.path.join(SITE_DIR, "deals.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            existing = json.load(f) or []
+    except Exception:
+        existing = []
+    if not existing:
+        return fetched
+    def converted(d):
+        return bool(d.get("_originalContext") or d.get("_formatContext")
+                    or any(it.get("converted") or it.get("url") for it in d.get("list", [])))
+    by_id = {}
+    for d in existing:            # 存量只保留转上链的（与「没转上链绝不上站」红线一致）
+        if converted(d):
+            by_id[str(d.get("id"))] = d
+    for d in fetched:             # 今日抓取的可覆盖同 id 旧数据（转链结果更新）
+        by_id[str(d.get("id"))] = d
+    merged = sorted(by_id.values(), key=lambda x: x.get("time", ""), reverse=True)
+    print(f"合并存量: {len(existing)} + 抓取 {len(fetched)} -> {len(merged)} 条")
+    return merged
+
+
 def main(raw=False):
     with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
         cfg = json.load(f)
@@ -602,6 +628,11 @@ def main(raw=False):
         deals = [d for d in deals if d["platform"] in ONLY_PLATFORMS]
         names = "/".join(PLATFORM_MAP.get(p, p) for p in sorted(ONLY_PLATFORMS))
         print(f"平台过滤: {before} -> {len(deals)} 条（仅保留 {names}）")
+
+    # 安全阀（2026-09-07 清空事故）：main() 只抓「今日」线报，历史全在存量文件里。
+    # 抓取一旦中途断页（代理 502 等），今日列表会只剩几条——直接覆盖会把全库清空。
+    # 所以落盘前必须与存量按 id 合并：存量已转链条目一律保留，抓取结果只做补充/更新。
+    deals = merge_with_existing(deals)
 
     # 抓完立刻落盘，防止后面转链挂掉把抓取成果也丢了
     with open(os.path.join(SITE_DIR, "deals.json"), "w", encoding="utf-8") as f:
