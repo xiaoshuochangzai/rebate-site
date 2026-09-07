@@ -173,6 +173,15 @@ max-height:196px;overflow:hidden;transition:max-height .3s}
 color:#c8ccd4;font-size:11px}
 @media(max-width:420px){.tb-right{width:70px}}
 
+/* 淘宝卡底角【复制链接】+ 图片灯箱 */
+.cpylink{margin-left:auto;font-size:11px;color:#3C6FE8;cursor:pointer;white-space:nowrap;
+padding:2px 9px;border:1px solid #D9DFED;border-radius:10px}
+.cpylink:hover{color:var(--jd);border-color:var(--jd)}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;z-index:98;
+cursor:zoom-out;align-items:center;justify-content:center}
+#lightbox.show{display:flex}
+#lightbox img{max-width:92vw;max-height:92vh;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+
 .more{margin:26px auto 0;width:150px;height:34px;line-height:34px;text-align:center;color:#8d939b;
 font-size:13px;background:#fff;border-radius:17px;box-shadow:var(--shadow);cursor:pointer}
 .more:hover{color:var(--brand)}
@@ -230,6 +239,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 </footer>
 
 <button id="top" title="回到顶部">↑</button>
+<div id="lightbox"><img alt=""></div>
 <div id="toast"></div>
 
 <script>
@@ -279,6 +289,10 @@ function copyTextOf(d){
   });
   return parts.join('\\n');
 }
+function linkOf(d){
+  const m = copyTextOf(d).match(/https?:\\/\\/[^\\s"'，。；、）】\\n]+/);
+  return m ? m[0] : '';
+}
 function cardHtml(d){
   let priceHtml = '';
   if(d._couponAfterPrice){
@@ -315,15 +329,20 @@ function cardHtml(d){
     + '<span class="reltime">'+esc(rel(d._addedAt || d.time))+'</span></div>'
     + '</div>';
 
-  // 淘宝卡：左边线报内容、右边图片（有几张图用几张），学大淘客排版
+  // 淘宝卡：左边线报内容、右边图片（有几张图用几张），学大淘客排版；底角【复制链接】
   if(d.platform === '1'){
     const imgs = (d.images && d.images.length) ? d.images : [];
     const right = imgs.length
       ? imgs.map(u=>'<img src="'+esc(u)+'" referrerpolicy="no-referrer" loading="lazy" alt="">').join('')
       : '<div class="noimg">暂无图片</div>';
-    return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'">'
+    const infoTb = '<div class="content-section-info">'
+      + '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
+      + '<span class="reltime">'+esc(rel(d._addedAt || d.time))+'</span></div>'
+      + '<a class="cpylink" href="javascript:;" title="复制转链链接">复制链接</a>'
+      + '</div>';
+    return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'" data-link="'+esc(linkOf(d))+'">'
       + '<div class="tb-wrap">'
-      +   '<div class="tb-left">'+priceHtml+box+info+'</div>'
+      +   '<div class="tb-left">'+priceHtml+box+infoTb+'</div>'
       +   '<div class="tb-right">'+right+'</div>'
       + '</div></div>';
   }
@@ -427,9 +446,30 @@ hisInput.addEventListener('input', ()=>{ clearTimeout(hisTimer); hisTimer = setT
 
 const listEl = document.getElementById('list');
 listEl.addEventListener('dblclick', e=>{
-  if(e.target.closest('a')) return;
+  if(e.target.closest('a') || e.target.tagName==='IMG') return;
   const card = e.target.closest('.report-item'); if(!card) return;
   copy(card.dataset.text, '文案已复制 ✓');
+});
+// 底角【复制链接】（淘宝卡）：只复制转链后的链接，不打断双击复制文案
+listEl.addEventListener('click', e=>{
+  const c = e.target.closest('.cpylink');
+  if(c){
+    e.stopPropagation(); e.preventDefault();
+    const card = c.closest('.report-item');
+    const link = (card && card.dataset.link) || '';
+    copy(link || (card && card.dataset.text) || '', link ? '链接已复制 ✓' : '未找到链接，已复制全文');
+    return;
+  }
+  // 图片点击放大（灯箱），点空白处关闭
+  if(e.target.tagName==='IMG' && e.target.closest('.report-item')){
+    e.stopPropagation(); e.preventDefault();
+    const lb = document.getElementById('lightbox');
+    lb.innerHTML = '<img src="'+e.target.src+'" referrerpolicy="no-referrer" alt="">';
+    lb.classList.add('show');
+  }
+});
+document.getElementById('lightbox').addEventListener('click', function(){
+  this.classList.remove('show');
 });
 document.getElementById('more').onclick = ()=>render(false);
 
