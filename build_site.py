@@ -380,7 +380,7 @@ function matched(){
   // 长文汇总卡（一条塞十几个商品）深处才提到的排后面，避免搜「洗衣液」冒出花生油卡
   const strong = [], weak = [];
   pool.forEach(d=>{
-    const head = copyTextOf(d).toLowerCase().split('\n').slice(0, 2).join('\n');
+    const head = copyTextOf(d).toLowerCase().split('\\n').slice(0, 2).join('\\n');
     (head.indexOf(k)>=0 ? strong : weak).push(d);
   });
   return strong.concat(weak);
