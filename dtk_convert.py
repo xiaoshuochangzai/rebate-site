@@ -401,7 +401,9 @@ def to_deal(tip, converted):
         price = tip.get("price") or ""
     if pict and not pict.startswith("http"):
         pict = "https:" + pict if pict.startswith("//") else pict
-    images = ([pict] if pict else []) + [x for x in tip_imgs if x != pict]
+    # 只收线报自带图片（Boss 2026-09-07：转链接口的商品主图常是淘宝 listing 的场景图，
+    # 插进头部会凭空多一张；仅当线报一张图都没有时才用主图兜底）
+    images = tip_imgs if tip_imgs else ([pict] if pict else [])
     tid = tip.get("id") or hashlib.md5((tip.get("title", "") + str(tip.get("text", ""))[:100]).encode("utf-8")).hexdigest()[:12]
     t = str(tip.get("create_time") or "")
     try:
