@@ -149,6 +149,7 @@ color:#c8ccd4;font-size:12px}
 max-height:196px;overflow:hidden;transition:max-height .3s}
 .report-item:hover .content-box{max-height:640px}
 .content-box .ct{white-space:pre-line}
+.content-box .ct .pj{color:var(--jd);font-weight:800;font-size:17px}
 .content-box a.lnk{display:block;font-size:12px;line-height:1.7;color:#3C6FE8;
 word-break:break-all;margin:1px 0;text-decoration:none}
 .content-box a.lnk:hover{color:var(--jd);text-decoration:underline}
@@ -305,7 +306,12 @@ function cardHtml(d){
   const body = [];
   const seenLink = {};
   (d.list||[]).forEach(it=>{
-    if(it.content) body.push('<div class="ct">'+esc(it.content)+'</div>');
+    if(it.content){
+      let t = esc(it.content);
+      // 仅京东：元前数字（如 10.9元）放大+红
+      if(d.platform==='2') t = t.replace(/(\\d+(?:\\.\\d+)?)元/g, '<span class="pj">$1元<\\/span>');
+      body.push('<div class="ct">'+t+'</div>');
+    }
     const c = pickCoupon(it);
     if(c && !seenLink[c]){ seenLink[c]=1;
       body.push('<a class="lnk" href="'+esc(c)+'" target="_blank" rel="noopener">'+esc(c)+'</a>'); }

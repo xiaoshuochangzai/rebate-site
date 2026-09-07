@@ -147,6 +147,7 @@ def convert_all_browser(deals, cfg=None, on_progress=None):
     stats = {"ok": 0, "fail": 0, "skipped": 0}
     out = []
     cdp = _get_cdp()
+    last_kill = 0.0  # 浏览器重启冷却（防通道抖动时反复启关浏览器，Boss 2026-09-07）
     for i, deal in enumerate(deals):
         material = build_material(deal)
         print(f"  [{i+1}/{len(deals)}] 精品库转链：{material.splitlines()[0][:30]}", flush=True)
@@ -160,18 +161,27 @@ def convert_all_browser(deals, cfg=None, on_progress=None):
                 stats["fail"] += 1
                 print(f"    ✗ {str(d.get('toast') or d)[:80]}", flush=True)
         except Exception as e:
-            # 通道僵死自愈：重启专用浏览器再试一次
+            # 通道僵死自愈：浏览器重启带 180s 冷却，冷却期内只重连通道（防反复启关）
             print(f"    ! 通道异常自愈：{str(e)[:60]}", flush=True)
             try:
                 cdp.close()
             except Exception:
                 pass
-            _kill_bot_browser()
-            time.sleep(2)
-            jd_bot.launch()
-            time.sleep(4)
+            now = time.time()
+            if now - last_kill >= 180:
+                last_kill = now
+                _kill_bot_browser()
+                time.sleep(2)
+                jd_bot.launch()
+                time.sleep(4)
+            else:
+                print("    ! 浏览器重启冷却中（180s 内不重复启关），仅重连通道", flush=True)
+                time.sleep(5)
             try:
                 cdp = _get_cdp()
+            except Exception:
+                pass
+            try:
                 d = _page_convert(cdp, material)
                 if d.get("ok") and d.get("out"):
                     apply_output(deal, d["out"])
