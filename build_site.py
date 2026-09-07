@@ -364,7 +364,8 @@ function cardHtml(d){
 function matched(){
   const k = kw.toLowerCase();
   return DEALS.filter(d=>{
-    if(filter!=='all' && d.platform!==filter) return false;
+    // 顶搜 = 跨全平台（淘宝+京东）；只在无关键词时才按当前分类筛
+    if(!k && filter!=='all' && d.platform!==filter) return false;
     if(!k) return true;
     return copyTextOf(d).toLowerCase().indexOf(k)>=0 || (d.cate||'').toLowerCase().indexOf(k)>=0;
   });
