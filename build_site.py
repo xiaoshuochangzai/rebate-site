@@ -338,7 +338,7 @@ function cardHtml(d){
     const infoTb = '<div class="content-section-info">'
       + '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
       + '<span class="reltime">'+esc(rel(d._addedAt || d.time))+'</span></div>'
-      + '<a class="cpylink" href="javascript:;" title="复制转链链接">复制链接</a>'
+      + '<a class="cpylink" href="javascript:;" title="复制完整文案">复制文案</a>'
       + '</div>';
     return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'" data-link="'+esc(linkOf(d))+'">'
       + '<div class="tb-wrap">'
@@ -451,14 +451,13 @@ listEl.addEventListener('dblclick', e=>{
   const card = e.target.closest('.report-item'); if(!card) return;
   copy(card.dataset.text, '文案已复制 ✓');
 });
-// 底角【复制链接】（淘宝卡）：只复制转链后的链接，不打断双击复制文案
+// 底角【复制文案】（淘宝卡）：复制完整成品文案，与双击卡片等效
 listEl.addEventListener('click', e=>{
   const c = e.target.closest('.cpylink');
   if(c){
     e.stopPropagation(); e.preventDefault();
     const card = c.closest('.report-item');
-    const link = (card && card.dataset.link) || '';
-    copy(link || (card && card.dataset.text) || '', link ? '链接已复制 ✓' : '未找到链接，已复制全文');
+    copy((card && card.dataset.text) || '', '文案已复制 ✓');
     return;
   }
   // 图片点击放大（灯箱），点空白处关闭
