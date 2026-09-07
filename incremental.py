@@ -159,6 +159,11 @@ def poll_dtk(deals, have_ids):
             if not out:
                 return False
             deal = dtk_convert.to_deal(t, out)
+            if not str(deal["list"][0]["content"]).strip():
+                # 剔除京东链接行后无有效内容（整条就是京东优惠）→ 丢弃且不再重试
+                dtk_seen.add(deal["id"])
+                log(f"淘宝线报 {deal['id']} 剔除京东链接后为空，丢弃")
+                return True
             deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
             deals.insert(0, deal)
             have_ids.add(deal["id"])

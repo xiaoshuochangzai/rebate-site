@@ -385,6 +385,18 @@ def rel_to_abs(rel):
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+_JD_LINK_RE = re.compile(r"u\.jd\.com|(?<![\w.])jd\.com|(?:^|/|(?<![\w.]))3\.cn/", re.I)
+
+
+def strip_jd_lines(text):
+    """淘宝线报清洗：删除含京东链接的行（Boss 2026-09-07：淘宝页不允许掺杂京东优惠）。
+    大淘客源头长文汇总线报本身就混着 u.jd.com 链接，入库前按行剔除。"""
+    if not text:
+        return text
+    kept = [ln for ln in str(text).split("\n") if not _JD_LINK_RE.search(ln)]
+    return "\n".join(kept).strip()
+
+
 def to_deal(tip, converted):
     """转成与 build_site.normalize 同构的 deal。converted 可为 dict{text,pict,price} 或纯文案。"""
     tip_imgs = [x for x in (tip.get("imgs") or []) if isinstance(x, str)]
@@ -399,6 +411,7 @@ def to_deal(tip, converted):
         body = converted or tip.get("text") or ""
         pict = tip.get("pic") or ""
         price = tip.get("price") or ""
+    body = strip_jd_lines(body)  # 淘宝线报剔除京东链接行（源头长文混京东优惠）
     if pict and not pict.startswith("http"):
         pict = "https:" + pict if pict.startswith("//") else pict
     # 只收线报自带图片（Boss 2026-09-07：转链接口的商品主图常是淘宝 listing 的场景图，
