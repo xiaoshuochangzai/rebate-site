@@ -15,6 +15,7 @@
 import json
 import atexit
 import os
+import re
 import subprocess
 import sys
 import time
@@ -22,6 +23,20 @@ import time
 import build_site
 import cf_kv
 import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
+
+_JD_PRICE_RE = re.compile(r"(?<![满每减立降])(\d+(?:\.\d+)?)元")
+
+
+def jd_price_of(deal):
+    """京东线报价格 = 文案首个『X元』（与前端价格高亮同款规则）。
+    满/每/减/立 前缀的是满减门槛不算价；券类无线报价的返回空。"""
+    if deal.get("price") or deal.get("_couponAfterPrice"):
+        return deal.get("price") or deal.get("_couponAfterPrice")
+    for it in deal.get("list", []):
+        m = _JD_PRICE_RE.search(it.get("content", "") or "")
+        if m:
+            return m.group(1)
+    return ""
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.join(BASE_DIR, "site")
@@ -297,6 +312,7 @@ def main():
                         STATE[k] = STATE.get(k, 0) + v
                     conv = out[0] if out else d
                     if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+                        conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要（精品库引擎不回价格，从文案取）
                         conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
                         deals.insert(0, conv)
                         have_ids.add(wid)
@@ -325,6 +341,7 @@ def main():
                     out, st = jd_convert.convert_all_browser([d], cfg)
                     conv = out[0] if out else d
                     if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+                        conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要
                         conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
                         deals.insert(0, conv)
                         have_ids.add(wid)
