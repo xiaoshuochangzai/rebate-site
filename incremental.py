@@ -23,6 +23,10 @@ import time
 import build_site
 import cf_kv
 import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
+import keyword_push
+
+# 关键词推送队列：本轮新入库的线报先进这里，轮末统一交给 keyword_push.flush
+KW_QUEUE = []
 
 _JD_PRICE_RE = re.compile(r"(?<![满每减立降])(\d+(?:\.\d+)?)元")
 
@@ -181,6 +185,7 @@ def poll_dtk(deals, have_ids):
                 return True
             deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
             deals.insert(0, deal)
+            KW_QUEUE.append(deal)  # 关键词推送队列
             have_ids.add(deal["id"])
             dtk_seen.add(deal["id"])
             inserted += 1
@@ -347,6 +352,7 @@ def main():
                         conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要（精品库引擎不回价格，从文案取）
                         conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
                         deals.insert(0, conv)
+                        KW_QUEUE.append(conv)  # 关键词推送队列
                         have_ids.add(wid)
                         persist(deals)
                         mark_dirty(f"new wire {wid}")
@@ -376,6 +382,7 @@ def main():
                         conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要
                         conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
                         deals.insert(0, conv)
+                        KW_QUEUE.append(conv)  # 关键词推送队列
                         have_ids.add(wid)
                         pending = [p for p in pending if str(p.get("id")) != wid]
                         save_json(PENDING_FILE, pending)
@@ -399,6 +406,14 @@ def main():
                     mark_dirty(f"dtk x{n}")
             except Exception as e:
                 log(f"淘宝轮询异常：{str(e)[:100]}")
+
+            # 关键词订阅推送（企业微信群机器人；配置热生效）
+            try:
+                if KW_QUEUE:
+                    keyword_push.flush(KW_QUEUE, log=log)
+                    KW_QUEUE.clear()
+            except Exception as e:
+                log(f"关键词推送异常：{str(e)[:80]}")
 
             # 滚动窗口：只保留最近 RETAIN_DAYS 天（按线报发布时间）
             cutoff = time.strftime("%Y-%m-%d 00:00:00",
