@@ -21,8 +21,12 @@
 import json
 import os
 import time
+import urllib.request
 
-import wecom_push
+try:
+    import wecom_push
+except Exception:
+    wecom_push = None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "keyword_config.json")
@@ -31,6 +35,8 @@ PENDING_FILE = os.path.join(BASE_DIR, "keyword_pending.json")  # 攒着待发的
 STATE_FILE = os.path.join(BASE_DIR, "keyword_state.json")      # {"last_push": 时间戳}
 MAX_PER_ROUND = 5        # 单条消息最多合并几条理报
 MIN_PUSH_INTERVAL = 600  # 两次推送最小间隔（秒），默认10分钟；攒够 MAX_PER_ROUND 条可提前发
+WEBHOOK_MAX = 1800       # 企微 text 消息单条上限 2048 字节，这里留余量
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 绕开本机代理
 
 _STATE = {"keywords": [], "chatids": [], "loaded": False}
 
@@ -42,6 +48,8 @@ def _load_config():
         kws = cfg.get("keywords") or []
         _STATE["keywords"] = [str(k).strip().lower() for k in kws if str(k).strip()]
         _STATE["chatids"] = [str(c).strip() for c in (cfg.get("chatids") or []) if str(c).strip()]
+        _STATE["webhook"] = (cfg.get("webhook") or "").strip()
+        _STATE["channel"] = (cfg.get("channel") or ("webhook" if _STATE["webhook"] else "longconn")).strip()
         try:
             _STATE["min_interval"] = int(cfg.get("min_interval") or MIN_PUSH_INTERVAL)
         except Exception:
@@ -59,8 +67,10 @@ def reload_config():
 
 
 def start():
-    """监控进程启动时调用：拉起企微长连接后台线程（幂等）。"""
-    wecom_push.start()
+    """监控进程启动时调用。只有 channel=longconn 才拉起企微长连接线程（webhook 通道不需要）。"""
+    _load_config()
+    if _STATE.get("channel") == "longconn" and wecom_push is not None:
+        wecom_push.start()
 
 
 def _copy_text(deal):
@@ -121,25 +131,17 @@ def _save_last_push(ts):
 
 
 def _fmt_one(deal):
-    plat = "京东" if str(deal.get("platform")) == "2" else "淘宝"
-    price = deal.get("_couponAfterPrice") or deal.get("price") or ""
-    price_s = f" ¥{price}" if price else ""
-    text = _copy_text(deal)
-    first_line = text.split("\n")[0][:60] if text else (deal.get("cate") or "")
-    t = (deal.get("time") or "")[5:16]
-    link = ""
+    """转链后的完整文案，原样输出（链接什么样就什么样，不改写、不加装饰）。"""
+    txt = (deal.get("_originalContext") or deal.get("_formatContext") or "").strip()
+    if txt:
+        return txt
+    parts = []
     for it in deal.get("list", []):
-        for k in ("url", "coupon_url"):
-            v = it.get(k) or ""
-            if v.startswith("http"):
-                link = v
-                break
-        if link:
-            break
-    body = f"**[{plat}]{price_s}** {first_line}\n> {t}"
-    if link:
-        body += f"\n> [下单链接]({link})"
-    return body
+        v = it.get("content") or it.get("url") or it.get("coupon_url") or it.get("item_id") or ""
+        v = (v or "").strip()
+        if v:
+            parts.append(v)
+    return "\n".join(parts).strip()
 
 
 def _targets():
@@ -149,7 +151,51 @@ def _targets():
     return list(wecom_push.known_chatids().keys())
 
 
+def _chunks(text, limit=WEBHOOK_MAX):
+    """按行切分，保证每片不超过 limit 字节（企微 text 单条上限 2048 字节）。"""
+    out, cur = [], ""
+    for ln in text.split("\n"):
+        add = (cur + "\n" + ln) if cur else ln
+        if len(add.encode("utf-8")) > limit and cur:
+            out.append(cur)
+            cur = ln
+        else:
+            cur = add
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _send_webhook(text):
+    """群机器人 webhook：text 消息原样发（链接保持原样），超长自动分片。"""
+    wh = _STATE.get("webhook", "")
+    if not wh:
+        return False, "webhook 未配置"
+    results, ok_all = [], True
+    for c in _chunks(text):
+        payload = json.dumps({"msgtype": "text", "text": {"content": c}}).encode("utf-8")
+        req = urllib.request.Request(wh, data=payload,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with OPENER.open(req, timeout=10) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            if d.get("errcode") == 0:
+                results.append("ok")
+            else:
+                ok_all = False
+                results.append(f"errcode={d.get('errcode')} {str(d.get('errmsg'))[:60]}")
+        except Exception as e:
+            ok_all = False
+            results.append(str(e)[:80])
+        time.sleep(0.4)
+    return ok_all, (f"{len(results)}片 " + "; ".join(results))
+
+
 def _send(text, log=print):
+    if _STATE.get("channel") == "webhook" or _STATE.get("webhook"):
+        return _send_webhook(text)
+    if wecom_push is None:
+        return False, "未配置 webhook，也没有长连接模块"
     targets = _targets()
     if not targets:
         return False, "还没有任何会话跟机器人互动过（在群里@机器人或单聊发条消息即可注册）"
@@ -193,24 +239,17 @@ def flush(deals, log=print):
         _save_pending(pending)
         return 0
     batch = pending[:MAX_PER_ROUND]
-    seen_kw = {}
-    for d in batch:
-        for k in _hit_keywords(d):
-            seen_kw[k] = seen_kw.get(k, 0) + 1
-    lines = [f"**🔔 关键词线报提醒**（{time.strftime('%H:%M')}）"]
-    all_kw = "、".join(sorted(seen_kw.keys()))
-    lines.append(f"命中关键词：**{all_kw}**　共 {len(batch)} 条")
-    lines.append("")
-    for d in batch:
-        lines.append(_fmt_one(d))
-        lines.append("")
-    ok, msg = _send("\n".join(lines), log)
+    # 原样合并：多条线报的完整文案直接拼一起，中间空一行，不加任何改写和装饰
+    blocks = [_fmt_one(d).strip() for d in batch]
+    blocks = [b for b in blocks if b]
+    text = "\n\n".join(blocks)
+    ok, msg = _send(text, log)
     if ok:
         pushed_ids.extend(str(d.get("id")) for d in batch)
         _save_pushed(pushed_ids)
         _save_pending(pending[len(batch):])
         _save_last_push(now)
-        log(f"关键词推送成功 {len(batch)} 条（命中：{all_kw} | {msg}）")
+        log(f"关键词推送成功 {len(batch)} 条（{msg}）")
         return len(batch)
     log(f"关键词推送失败：{msg}（{len(pending)} 条留到下一轮重试）")
     _save_pending(pending)
