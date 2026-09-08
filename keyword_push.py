@@ -239,18 +239,37 @@ def flush(deals, log=print):
         _save_pending(pending)
         return 0
     batch = pending[:MAX_PER_ROUND]
-    # 原样合并：多条线报的完整文案直接拼一起，中间空一行，不加任何改写和装饰
-    blocks = [_fmt_one(d).strip() for d in batch]
-    blocks = [b for b in blocks if b]
-    text = "\n\n".join(blocks)
-    ok, msg = _send(text, log)
-    if ok:
-        pushed_ids.extend(str(d.get("id")) for d in batch)
+    # 京东/淘宝分组独立合并，不交叉；淘宝去掉底部 s.click.taobao.com 短链行
+    FOOTER = "————\n更多线报访问AI好价线报\nhttps://shengqian.cyou/"
+    jd = [d for d in batch if str(d.get("platform")) == "2"]
+    tb = [d for d in batch if str(d.get("platform")) != "2"]
+    sent_ids, msgs, ok_any = [], [], False
+    for group, plat in ((jd, "京东"), (tb, "淘宝")):
+        if not group:
+            continue
+        blocks = []
+        for d in group:
+            t = _fmt_one(d).strip()
+            if plat == "淘宝":
+                t = "\n".join(ln for ln in t.split("\n") if "s.click.taobao.com" not in ln).strip()
+            if t:
+                blocks.append(t)
+        if not blocks:
+            continue
+        text = "\n\n".join(blocks) + "\n" + FOOTER
+        ok, msg = _send(text, log)
+        msgs.append(f"{plat}{len(blocks)}条({msg})")
+        if ok:
+            sent_ids.extend(str(d.get("id")) for d in group)
+            ok_any = True
+    if ok_any:
+        pushed_ids.extend(sent_ids)
         _save_pushed(pushed_ids)
-        _save_pending(pending[len(batch):])
+        sent_set = set(sent_ids)
+        _save_pending([p for p in pending if str(p.get("id")) not in sent_set])
         _save_last_push(now)
-        log(f"关键词推送成功 {len(batch)} 条（{msg}）")
-        return len(batch)
+        log(f"关键词推送成功 {len(sent_ids)} 条（{' | '.join(msgs)}）")
+        return len(sent_ids)
     log(f"关键词推送失败：{msg}（{len(pending)} 条留到下一轮重试）")
     _save_pending(pending)
     return 0
