@@ -247,20 +247,32 @@ def flush(deals, log=print):
     for group, plat in ((jd, "京东"), (tb, "淘宝")):
         if not group:
             continue
-        blocks = []
+        items = []
         for d in group:
             t = _fmt_one(d).strip()
             if plat == "淘宝":
                 t = "\n".join(ln for ln in t.split("\n") if "s.click.taobao.com" not in ln).strip()
             if t:
-                blocks.append(t)
-        if not blocks:
+                items.append((d, t))
+        # 合并后太长：优先删最长的线报，删到一条消息能发完为止（至少保留1条，兜底分片）
+        dropped = []
+        while items:
+            total = len(("\n\n".join(t for _, t in items) + "\n" + FOOTER).encode("utf-8"))
+            if total <= WEBHOOK_MAX or len(items) == 1:
+                break
+            longest = max(items, key=lambda x: len(x[1].encode("utf-8")))
+            items.remove(longest)
+            dropped.append(longest[0])
+        if not items:
             continue
-        text = "\n\n".join(blocks) + "\n" + FOOTER
+        text = "\n\n".join(t for _, t in items) + "\n" + FOOTER
         ok, msg = _send(text, log)
-        msgs.append(f"{plat}{len(blocks)}条({msg})")
+        extra = f"，删超长{len(dropped)}条" if dropped else ""
+        msgs.append(f"{plat}{len(items)}条{extra}({msg})")
         if ok:
-            sent_ids.extend(str(d.get("id")) for d in group)
+            sent_ids.extend(str(d.get("id")) for d, _ in items)
+            # 被删掉的太长线报直接标记已推（丢弃），不留在队列里死循环
+            pushed_ids.extend(str(d.get("id")) for d in dropped)
             ok_any = True
     if ok_any:
         pushed_ids.extend(sent_ids)
