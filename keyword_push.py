@@ -27,7 +27,10 @@ import wecom_push
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "keyword_config.json")
 PUSHED_FILE = os.path.join(BASE_DIR, "keyword_pushed.json")  # 最近已推送线报 id 环形记录，防重
-MAX_PER_ROUND = 5
+PENDING_FILE = os.path.join(BASE_DIR, "keyword_pending.json")  # 攒着待发的命中线报（节流用）
+STATE_FILE = os.path.join(BASE_DIR, "keyword_state.json")      # {"last_push": 时间戳}
+MAX_PER_ROUND = 5        # 单条消息最多合并几条理报
+MIN_PUSH_INTERVAL = 600  # 两次推送最小间隔（秒），默认10分钟；攒够 MAX_PER_ROUND 条可提前发
 
 _STATE = {"keywords": [], "chatids": [], "loaded": False}
 
@@ -39,6 +42,10 @@ def _load_config():
         kws = cfg.get("keywords") or []
         _STATE["keywords"] = [str(k).strip().lower() for k in kws if str(k).strip()]
         _STATE["chatids"] = [str(c).strip() for c in (cfg.get("chatids") or []) if str(c).strip()]
+        try:
+            _STATE["min_interval"] = int(cfg.get("min_interval") or MIN_PUSH_INTERVAL)
+        except Exception:
+            _STATE["min_interval"] = MIN_PUSH_INTERVAL
     except Exception:
         _STATE["keywords"] = []
         _STATE["chatids"] = []
@@ -72,21 +79,45 @@ def _hit_keywords(deal):
     return [k for k in _STATE["keywords"] if k in text]
 
 
-def _load_pushed():
+def _load_json(path, default):
     try:
-        with open(PUSHED_FILE, encoding="utf-8") as f:
-            return json.load(f) or []
+        with open(path, encoding="utf-8") as f:
+            return json.load(f) or default
     except Exception:
-        return []
+        return default
+
+
+def _save_json(path, obj):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _load_pushed():
+    return _load_json(PUSHED_FILE, [])
 
 
 def _save_pushed(ids):
     # 环形保留最近 2000 条，防文件无限膨胀
-    try:
-        with open(PUSHED_FILE, "w", encoding="utf-8") as f:
-            json.dump(ids[-2000:], f, ensure_ascii=False)
-    except Exception:
-        pass
+    _save_json(PUSHED_FILE, ids[-2000:])
+
+
+def _load_pending():
+    return _load_json(PENDING_FILE, [])
+
+
+def _save_pending(items):
+    _save_json(PENDING_FILE, items[-200:])
+
+
+def _load_last_push():
+    return float(_load_json(STATE_FILE, {}).get("last_push", 0) or 0)
+
+
+def _save_last_push(ts):
+    _save_json(STATE_FILE, {"last_push": ts})
 
 
 def _fmt_one(deal):
@@ -137,41 +168,52 @@ def _send(text, log=print):
 
 def flush(deals, log=print):
     """推送本轮命中关键词的新线报。deals=本轮新入库线报列表（时间倒序）。
+    节流：命中先攒进 pending，攒够 MAX_PER_ROUND 条 或 距上次推送超过 min_interval 秒才发一条汇总。
     返回推送条数。每次调用都重读配置（改 keyword_config.json 热生效）。"""
     _load_config()
     if not _STATE["keywords"]:
         return 0
     pushed_ids = _load_pushed()
     pushed_set = set(pushed_ids)
-    hits = []
-    seen_kw = {}
+    pending = _load_pending()
+    pending_ids = {str(p.get("id")) for p in pending}
     for d in deals:
         did = str(d.get("id"))
-        if did in pushed_set:
+        if did in pushed_set or did in pending_ids:
             continue
-        kws = _hit_keywords(d)
-        if kws:
-            hits.append((kws, d))
-            for k in kws:
-                seen_kw.setdefault(k, 0)
-                seen_kw[k] += 1
-    if not hits:
+        if _hit_keywords(d):
+            pending.append(d)
+            pending_ids.add(did)
+    if not pending:
         return 0
-    hits = hits[:MAX_PER_ROUND]
+    min_iv = int(_STATE.get("min_interval") or MIN_PUSH_INTERVAL)
+    now = time.time()
+    due = len(pending) >= MAX_PER_ROUND or (now - _load_last_push()) >= min_iv
+    if not due:
+        _save_pending(pending)
+        return 0
+    batch = pending[:MAX_PER_ROUND]
+    seen_kw = {}
+    for d in batch:
+        for k in _hit_keywords(d):
+            seen_kw[k] = seen_kw.get(k, 0) + 1
     lines = [f"**🔔 关键词线报提醒**（{time.strftime('%H:%M')}）"]
     all_kw = "、".join(sorted(seen_kw.keys()))
-    lines.append(f"命中关键词：**{all_kw}**")
+    lines.append(f"命中关键词：**{all_kw}**　共 {len(batch)} 条")
     lines.append("")
-    for kws, d in hits:
+    for d in batch:
         lines.append(_fmt_one(d))
         lines.append("")
     ok, msg = _send("\n".join(lines), log)
     if ok:
-        pushed_ids.extend(str(d.get("id")) for _, d in hits)
+        pushed_ids.extend(str(d.get("id")) for d in batch)
         _save_pushed(pushed_ids)
-        log(f"关键词推送成功 {len(hits)} 条（命中：{all_kw} | {msg}）")
-        return len(hits)
-    log(f"关键词推送失败：{msg}")
+        _save_pending(pending[len(batch):])
+        _save_last_push(now)
+        log(f"关键词推送成功 {len(batch)} 条（命中：{all_kw} | {msg}）")
+        return len(batch)
+    log(f"关键词推送失败：{msg}（{len(pending)} 条留到下一轮重试）")
+    _save_pending(pending)
     return 0
 
 
