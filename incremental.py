@@ -27,6 +27,7 @@ import keyword_push
 
 # 关键词推送队列：本轮新入库的线报先进这里，轮末统一交给 keyword_push.flush
 KW_QUEUE = []
+_ROUND = [0]  # 轮询轮数计数（用于周期性打印企微连接状态）
 
 _JD_PRICE_RE = re.compile(r"(?<![满每减立降])(\d+(?:\.\d+)?)元")
 
@@ -414,13 +415,22 @@ def main():
             except Exception as e:
                 log(f"淘宝轮询异常：{str(e)[:100]}")
 
-            # 关键词订阅推送（企业微信群机器人；配置热生效）
+            # 关键词订阅推送（企微智能机器人长连接；配置热生效）
             try:
                 if KW_QUEUE:
                     keyword_push.flush(KW_QUEUE, log=log)
                     KW_QUEUE.clear()
             except Exception as e:
                 log(f"关键词推送异常：{str(e)[:80]}")
+            # 每 20 轮（约 10 分钟）打一次企微长连接状态，方便排查
+            _ROUND[0] += 1
+            if _ROUND[0] % 20 == 0 or _ROUND[0] == 1:
+                try:
+                    import wecom_push
+                    st = wecom_push.status()
+                    log(f"企微长连接状态={st['state']} since={st['since']} err={st['last_err'][:60]} 已注册会话={len(wecom_push.known_chatids())}")
+                except Exception:
+                    pass
 
             # 滚动窗口：只保留最近 RETAIN_DAYS 天（按线报发布时间）
             cutoff = time.strftime("%Y-%m-%d 00:00:00",

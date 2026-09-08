@@ -177,11 +177,15 @@ def flush(deals, log=print):
 
 def build_sample_message():
     """取 deals.json 最新一条带链接的真实线报，拼 markdown（首次捕获会话时自动推）。"""
-    try:
-        deals_file = os.path.join(BASE_DIR, "deals.json")
-        with open(deals_file, encoding="utf-8") as f:
-            deals = json.load(f)
-    except Exception:
+    deals = []
+    for rel in ("deals.json", os.path.join("site", "deals.json")):
+        try:
+            with open(os.path.join(BASE_DIR, rel), encoding="utf-8") as f:
+                deals = json.load(f)
+            break
+        except Exception:
+            continue
+    if not deals:
         return ""
     for d in deals[:50]:
         text = _copy_text(d)
