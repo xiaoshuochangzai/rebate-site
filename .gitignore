@@ -17,3 +17,12 @@ __pycache__/
 gh_check.html
 # 专用转链浏览器 profile（含登录 cookie，绝不外传）
 .jd-bot-profile/
+
+# 本地密钥/运行时文件不入库
+keyword_config.json
+wecom_chatids.json
+wecom_push_log.txt
+keyword_pushed.json
+monitor_log.txt
+monitor_err.txt
+monitor.lock

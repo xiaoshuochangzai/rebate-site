@@ -302,6 +302,13 @@ def main():
     except Exception:
         pass
     acquire_single_instance()
+    # 企微智能机器人长连接（关键词推送通道）：后台线程，断了自动重连
+    try:
+        keyword_push.start()
+        import wecom_push
+        print("企微长连接线程已启动，状态=%s" % wecom_push.status()["state"])
+    except Exception as e:
+        print("企微长连接启动失败：%s" % str(e)[:100])
     args = sys.argv[1:]
     once = "--once" in args
     do_init = "--init" in args
