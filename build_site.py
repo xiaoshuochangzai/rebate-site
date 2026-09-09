@@ -92,19 +92,18 @@ border-radius:0 9px 9px 0;background:#F0F4FF;color:var(--brand);font-size:13px;c
 /* ---------- 筛选 / 实时条 ---------- */
 .wrap{max-width:1230px;margin:0 auto;padding:14px 20px 40px}
 .screen{background:#fff;border:2px solid #E7EDF9;border-radius:8px;padding:8px 18px}
-.screen-item{display:flex;align-items:center;flex-wrap:wrap;min-height:32px;line-height:32px}
-.screen-item .title{font-size:12px;color:#666;margin-right:6px}
-.screen-item ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap}
-.screen-item ul li{margin:0 10px 0 0;font-size:12px;color:#606266;cursor:pointer;
-padding:0 5px;border-radius:2px;transition:.15s}
-.screen-item ul li:hover{color:var(--brand)}
-.screen-item ul li.active{background:#E0EDFF;color:var(--brand);font-weight:500}
+.screen-item{display:flex;align-items:center;flex-wrap:wrap;min-height:38px;line-height:38px}
+.screen-item .title{font-size:14px;color:#666;margin-right:6px;font-weight:500}
+.screen-item ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.screen-item ul li{font-size:15px;font-weight:500;color:#3a3f4a;cursor:pointer;
+padding:4px 14px;border-radius:6px;transition:.15s;border:1px solid transparent}
+.screen-item ul li:hover{color:var(--brand);background:#F2F6FF}
+.screen-item ul li.active{background:#E0EDFF;color:var(--brand);font-weight:600;border-color:#BCD3FA}
 
-/* ---------- 历史价格跟踪 ---------- */
+/* ---------- 关键词搜索 ---------- */
 .hisbox{margin-left:auto;display:flex;align-items:center;gap:8px}
-.hisbox .title{font-size:12px;color:#666;white-space:nowrap}
-.hisbox input{width:220px;height:30px;padding:0 10px;background:#F9FBFF;
-border:1px solid #D9DFED;border-radius:8px;outline:none;font-size:12px;color:#333}
+.hisbox input{width:280px;height:36px;padding:0 14px;background:#F9FBFF;
+border:1px solid #D9DFED;border-radius:8px;outline:none;font-size:14px;color:#333}
 .hisbox input:focus{border-color:#b9c6f2}
 .his-panel{background:#fff;border:2px solid #E7EDF9;border-radius:8px;margin-top:10px;
 padding:4px 14px;max-height:420px;overflow:auto}
@@ -216,8 +215,7 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
       <div class="title">平台：</div>
       <ul id="plat"></ul>
       <div class="hisbox">
-        <div class="title">历史价格跟踪：</div>
-        <input id="hisKw" placeholder="输入商品关键词，如：蓝月亮" autocomplete="off">
+        <input id="hisKw" placeholder="搜索商品关键词" autocomplete="off">
       </div>
     </div>
   </div>
