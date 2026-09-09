@@ -81,49 +81,51 @@ background:linear-gradient(90deg,#FF7D00,#FF0A00);-webkit-background-clip:text;b
 color:transparent;white-space:nowrap}
 .logo small{display:inline-block;font-size:10px;font-weight:500;color:#c3c8d0;
 -webkit-text-fill-color:#c3c8d0;margin-left:6px;letter-spacing:1px}
-.search{margin-left:auto;display:flex;align-items:center;position:relative}
-.search input{width:300px;height:34px;padding:0 70px 0 12px;background:#F9FBFF;
-border:1px solid #D9DFED;border-radius:9px;outline:none;font-size:13px;color:#333}
-.search input:focus{border-color:#b9c6f2}
-.search .sbtn{position:absolute;right:1px;top:1px;height:32px;padding:0 16px;border:0;
-border-radius:0 9px 9px 0;background:#F0F4FF;color:var(--brand);font-size:13px;cursor:pointer}
-@media(max-width:640px){.topbar-inner{padding:8px 12px;gap:10px}.search input{width:100%}}
+@media(max-width:640px){.topbar-inner{padding:8px 12px;gap:10px}}
 
 /* ---------- 筛选 / 实时条 ---------- */
 .wrap{max-width:1230px;margin:0 auto;padding:14px 20px 40px}
-.screen{background:#fff;border:2px solid #E7EDF9;border-radius:8px;padding:8px 18px}
-.screen-item{display:flex;align-items:center;flex-wrap:wrap;min-height:38px;line-height:38px}
-.screen-item .title{font-size:14px;color:#666;margin-right:6px;font-weight:500}
-.screen-item ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
-.screen-item ul li{font-size:15px;font-weight:500;color:#3a3f4a;cursor:pointer;
-padding:4px 14px;border-radius:6px;transition:.15s;border:1px solid transparent}
-.screen-item ul li:hover{color:var(--brand);background:#F2F6FF}
-.screen-item ul li.active{background:#E0EDFF;color:var(--brand);font-weight:600;border-color:#BCD3FA}
+.screen{background:#fff;border:1px solid #E7EDF9;border-radius:14px;padding:12px 18px;
+box-shadow:0 2px 10px rgba(17,55,178,.05)}
+.screen-item{display:flex;align-items:center;flex-wrap:wrap;gap:14px;min-height:44px}
+.screen-item .title{font-size:14px;color:#8a909c;margin-right:2px;font-weight:500;letter-spacing:.5px}
+.screen-item ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:10px}
+.screen-item ul li{font-size:16px;font-weight:500;letter-spacing:1px;color:#5a6270;cursor:pointer;
+padding:7px 26px;border-radius:999px;transition:.18s;border:1px solid #E3E8F2;background:#fff}
+.screen-item ul li:hover{color:var(--brand);border-color:#B9C6F2;background:#F5F8FF}
+.screen-item ul li.active{background:var(--brand);color:#fff;font-weight:600;border-color:var(--brand);
+box-shadow:0 4px 12px rgba(60,75,238,.28)}
 
-/* ---------- 关键词搜索 ---------- */
-.hisbox{margin-left:auto;display:flex;align-items:center;gap:8px}
-.hisbox input{width:280px;height:36px;padding:0 14px;background:#F9FBFF;
-border:1px solid #D9DFED;border-radius:8px;outline:none;font-size:14px;color:#333}
-.hisbox input:focus{border-color:#b9c6f2}
-.his-panel{background:#fff;border:2px solid #E7EDF9;border-radius:8px;margin-top:10px;
-padding:4px 14px;max-height:420px;overflow:auto}
-.his-row{display:flex;align-items:center;gap:10px;padding:7px 0;
-border-bottom:1px solid #F0F1F4;font-size:12px;color:#34373d}
-.his-row:last-child{border-bottom:0}
-.his-time{color:#9aa0a8;white-space:nowrap}
-.his-price{color:var(--jd);font-weight:700;white-space:nowrap}
-.his-price s{color:#b6bbc3;font-weight:400;margin-left:4px}
-.his-ct{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#606266}
-@media(max-width:780px){.hisbox{margin-left:0;width:100%}.hisbox input{flex:1;width:auto}}
-
-.report-realtime{display:inline-flex;align-items:center;background:#fff;padding:6px 14px;
-margin:14px 0 4px;box-shadow:inset 2px 2px 3px 0 #e7eaee;border-radius:4px;font-size:13px;color:#555}
-.report-realtime .realtime{color:#f53245;font-weight:600;margin-right:10px}
-.report-realtime .wire{display:inline-block;width:1px;height:14px;background:#dde3ea;margin-right:10px}
-.report-realtime .time,.report-realtime .num{display:inline-block;color:#ead2a7;font-weight:500;
-background:#212121;padding:0 6px;margin:0 3px;border-radius:4px;vertical-align:middle}
-.report-realtime .refresh{margin-left:8px;color:#f53245;font-weight:600;cursor:pointer;text-decoration:none}
-.report-realtime .refresh:hover{text-decoration:underline}
+/* ---------- 关键词搜索（筛选行右侧） ---------- */
+.srch{margin-left:auto;display:flex;align-items:center;position:relative}
+.srch input{width:280px;height:40px;padding:0 78px 0 16px;background:#FAFBFF;
+border:1px solid #E0E6F2;border-radius:999px;outline:none;font-size:14px;color:#333;transition:.18s}
+.srch input::placeholder{color:#aab1bd}
+.srch input:focus{border-color:var(--brand);background:#fff;box-shadow:0 0 0 3px rgba(60,75,238,.1)}
+.srch .sbtn{position:absolute;right:4px;top:4px;height:32px;padding:0 18px;border:0;
+border-radius:999px;background:var(--brand);color:#fff;font-size:13px;font-weight:500;cursor:pointer;
+transition:.18s}
+.srch .sbtn:hover{background:#2f3ddb;box-shadow:0 3px 10px rgba(60,75,238,.3)}
+@media(max-width:780px){.srch{margin-left:0;width:100%}.srch input{width:100%}}
+/* ---------- 实时状态条 ---------- */
+.rtbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;
+margin:14px 0 4px;padding:13px 18px;border:1px solid #EBEFF7;border-radius:14px;
+box-shadow:0 2px 10px rgba(17,55,178,.05)}
+.rt-live{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:600;color:#E12319}
+.rt-dot{width:8px;height:8px;border-radius:50%;background:#E12319;animation:rtpulse 1.8s infinite}
+@keyframes rtpulse{0%{box-shadow:0 0 0 0 rgba(225,35,25,.45)}70%{box-shadow:0 0 0 8px rgba(225,35,25,0)}
+100%{box-shadow:0 0 0 0 rgba(225,35,25,0)}}
+.rt-sep{width:1px;height:16px;background:#E6EAF2}
+.rt-txt{font-size:14px;color:#6b7280}
+.rt-num{display:inline-block;color:#FFD98A;font-weight:700;font-size:14px;background:#212121;
+padding:1px 9px;margin:0 5px;border-radius:6px;vertical-align:middle;letter-spacing:.5px}
+.rt-refresh{margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:7px 20px;
+border:1px solid #FFC9C4;border-radius:999px;color:#E12319;background:#FFF7F6;
+font-size:13px;font-weight:600;cursor:pointer;transition:.18s}
+.rt-refresh:hover{background:#E12319;color:#fff;border-color:#E12319;box-shadow:0 4px 12px rgba(225,35,25,.25)}
+.rt-refresh::before{content:"";width:12px;height:12px;border:1.6px solid currentColor;
+border-top-color:transparent;border-radius:50%;display:inline-block}
+@media(max-width:780px){.rt-refresh{margin-left:0}}
 
 /* ---------- 卡片网格 ---------- */
 .report-list{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:12px}
@@ -202,29 +204,30 @@ box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
 <div class="topbar">
   <div class="topbar-inner">
     <a class="logo" href="/">好价线报<small>HAOJIA</small></a>
-    <div class="search">
-      <input id="kw" placeholder="输入商品关键词搜索线报" autocomplete="off">
-      <button class="sbtn" id="btnSearch">搜索</button>
-    </div>
   </div>
 </div>
 
 <div class="wrap">
   <div class="screen">
     <div class="screen-item">
-      <div class="title">平台：</div>
+      <div class="title">平台</div>
       <ul id="plat"></ul>
-      <div class="hisbox">
-        <input id="hisKw" placeholder="搜索商品关键词" autocomplete="off">
+      <div class="srch">
+        <input id="kw" placeholder="搜索商品关键词，如：蓝月亮" autocomplete="off">
+        <button class="sbtn" id="btnSearch">搜索</button>
       </div>
     </div>
   </div>
 
-  <div class="his-panel" id="hisPanel" style="display:none"></div>
-
-  <div class="report-realtime">
-    <span class="realtime">实时更新</span><span class="wire"></span>截止
-    <span class="time">__TS_HM__</span>今日已经更新<span class="num" id="cnt">0</span>条<a class="refresh" href="javascript:;" id="btnRefresh" title="刷新当前平台最新线报">刷新</a>
+  <div class="rtbar">
+    <span class="rt-live"><i class="rt-dot"></i>实时更新</span>
+    <span class="rt-sep"></span>
+    <span class="rt-txt">截止 <b class="rt-num">__TS_HM__</b></span>
+    <span class="rt-sep"></span>
+    <span class="rt-txt">今日更新 <b class="rt-num" id="cnt">0</b> 条</span>
+    <span class="rt-sep"></span>
+    <span class="rt-txt">累计收录线报 <b class="rt-num" id="total">0</b> 条</span>
+    <a class="rt-refresh" href="javascript:;" id="btnRefresh" title="刷新当前平台最新线报">刷新</a>
   </div>
 
   <div class="report-list" id="list"></div>
@@ -388,6 +391,7 @@ function render(reset){
   const list = document.getElementById('list');
   if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
   document.getElementById('cnt').textContent = cur.length;
+  document.getElementById('total').textContent = DEALS.length;
   document.getElementById('empty').style.display = cur.length ? 'none' : 'block';
   const slice = cur.slice(shown, shown+PAGE_SIZE);
   list.insertAdjacentHTML('beforeend', slice.map(cardHtml).join(''));
@@ -428,35 +432,6 @@ kwInput.addEventListener('input', e=>{
 });
 document.getElementById('btnSearch').onclick = ()=>{ kw = kwInput.value.trim(); render(true); };
 kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.trim(); render(true);} });
-
-// ---- 历史价格跟踪：按关键词搜近 7 天带价格的线报记录 ----
-const hisInput = document.getElementById('hisKw');
-const hisPanel = document.getElementById('hisPanel');
-let hisTimer;
-function renderHis(){
-  const k = hisInput.value.trim().toLowerCase();
-  if(!k){ hisPanel.style.display='none'; hisPanel.innerHTML=''; return; }
-  const rows = DEALS.filter(d=>{
-    if(!(d._couponAfterPrice || d.price)) return false;
-    return copyTextOf(d).toLowerCase().indexOf(k) >= 0;
-  }).slice(0, 40);  // DEALS 本身最新在前，截前 40 条即最近的价格记录
-  hisPanel.innerHTML = rows.length
-    ? rows.map(d=>{
-        const has = d._couponAfterPrice != null && d._couponAfterPrice !== '';
-        const p = has ? '到手 ¥'+esc(d._couponAfterPrice) : (d.price ? '¥'+esc(d.price) : '');
-        const old = (has && d.price && d.price > d._couponAfterPrice) ? '<s>¥'+esc(d.price)+'</s>' : '';
-        const ct = ((d.list && d.list[0] && d.list[0].content) || '').replace(/\\s+/g,' ').slice(0, 42);
-        return '<div class="his-row">'
-          + '<span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
-          + '<span class="his-time">'+esc((d.time||'').slice(5,16))+'</span>'
-          + '<span class="his-price">'+p+old+'</span>'
-          + '<span class="his-ct">'+esc(ct)+'</span>'
-          + '</div>';
-      }).join('')
-    : '<div class="his-row">没有匹配的历史价格记录（数据从 2026-09-06 起积累）</div>';
-  hisPanel.style.display = 'block';
-}
-hisInput.addEventListener('input', ()=>{ clearTimeout(hisTimer); hisTimer = setTimeout(renderHis, 200); });
 
 const listEl = document.getElementById('list');
 listEl.addEventListener('dblclick', e=>{
@@ -538,7 +513,7 @@ if(btnRefreshEl){
 }
 // 首屏渲染后自动拉一次最新数据
 refreshData().then(()=>{ // 数据落定后同步顶部「截止」时间，别让它停留在构建时刻
-  const ts = document.querySelector('.report-realtime .time');
+  const ts = document.querySelector('.rt-num');
   if(ts) ts.textContent = new Date().toTimeString().slice(0,5);
 });
 </script>
