@@ -1,0 +1,6 @@
+origin	https://github.com/xiaoshuochangzai/rebate-site.git (fetch)
+origin	https://github.com/xiaoshuochangzai/rebate-site.git (push)
+* main 596984d [origin/main: gone] feat: 京东线报推送不限关键词，有新就推（Boss 2026-09-11 明令）；淘宝维持关键词命中才推，70/30配比不变
+596984d feat: 京东线报推送不限关键词，有新就推（Boss 2026-09-11 明令）；淘宝维持关键词命中才推，70/30配比不变
+1acd19f feat: 关键词推送按京东70%/淘宝30%配比(每轮京东<=7条+淘宝<=3条,不互补)；淘宝多条合并用「——」单独一行隔开
+0b3e2e4 fix: 精品库转链页匹配收紧——只认 chain_link 页，避免被重定向到首页时误判 NO_PAGE 触发无谓浏览器重启；顺手优先复用 jingpinku 域标签页导航回转链页

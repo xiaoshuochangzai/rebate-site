@@ -1,0 +1,4 @@
+错误: 无效参数/选项 - '//FI'。
+键入 "TASKLIST /?" 以了解用法。
+===LOCK===
+===PENDING_BYTES===

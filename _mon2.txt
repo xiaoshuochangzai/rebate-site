@@ -1,0 +1,37 @@
+MONITOR_RUNNING
+19172 C:\Users\23058\.workbuddy\binaries\python\envs\default\Scripts\pythonw.exe -u incremental.py --interval 30
+23464 C:\Users\23058\.workbuddy\binaries\python\envs\default\Scripts\python.exe -c 
+import psutil, os
+hits=[]
+for p in psutil.process_iter(['pid','name','cmdline']):
+    try:
+        cl=p.info.get('cmdline') or []
+        if cl and any('incremental.py' in (a or '') for a in cl):
+            hits.append((p.info['pid'], ' '.join(cl)))
+    except Exception: pass
+print('MONITOR_RUNNING' if hits else 'NO_MONITOR')
+for pid,cl in hits: print(pid, cl)
+lk='monitor.lock'
+print('LOCK:', (open(lk).read().strip() if os.path.exists(lk) else 'NONE'))
+pk='keyword_pending.json'
+print('PENDING_BYTES:', (os.path.getsize(pk) if os.path.exists(pk) else 'NONE'))
+
+23860 C:\Users\23058\.workbuddy\binaries\python\envs\default\Scripts\pythonw.exe -u incremental.py --interval 30
+27204 C:\Users\23058\.workbuddy\binaries\python\envs\default\Scripts\python.exe -c 
+import psutil, os
+hits=[]
+for p in psutil.process_iter(['pid','name','cmdline']):
+    try:
+        cl=p.info.get('cmdline') or []
+        if cl and any('incremental.py' in (a or '') for a in cl):
+            hits.append((p.info['pid'], ' '.join(cl)))
+    except Exception: pass
+print('MONITOR_RUNNING' if hits else 'NO_MONITOR')
+for pid,cl in hits: print(pid, cl)
+lk='monitor.lock'
+print('LOCK:', (open(lk).read().strip() if os.path.exists(lk) else 'NONE'))
+pk='keyword_pending.json'
+print('PENDING_BYTES:', (os.path.getsize(pk) if os.path.exists(pk) else 'NONE'))
+
+LOCK: 19172
+PENDING_BYTES: 197217
