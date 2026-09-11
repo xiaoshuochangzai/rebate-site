@@ -24,6 +24,7 @@ import build_site
 import cf_kv
 import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
 import keyword_push
+import yuebai_short  # u.jd.com → 悦拜短链，防扒站（只影响站上展示 _siteContext，企微推送仍用原文）
 
 # 关键词推送队列：本轮新入库的线报先进这里，轮末统一交给 keyword_push.flush
 KW_QUEUE = []
@@ -358,6 +359,10 @@ def main():
                     if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
                         conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要（精品库引擎不回价格，从文案取）
                         conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
+                        try:
+                            yuebai_short.protect_deal(conv, log=log)  # 站上展示套悦拜短链（_siteContext），防机器人扒 u.jd.com 裸返利链
+                        except Exception as _ye:
+                            log(f"  短链保护跳过：{str(_ye)[:60]}")
                         deals.insert(0, conv)
                         KW_QUEUE.append(conv)  # 关键词推送队列
                         have_ids.add(wid)
@@ -388,6 +393,10 @@ def main():
                     if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
                         conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要
                         conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
+                        try:
+                            yuebai_short.protect_deal(conv, log=log)  # 站上展示套悦拜短链（_siteContext），防机器人扒 u.jd.com 裸返利链
+                        except Exception as _ye:
+                            log(f"  短链保护跳过：{str(_ye)[:60]}")
                         deals.insert(0, conv)
                         KW_QUEUE.append(conv)  # 关键词推送队列
                         have_ids.add(wid)

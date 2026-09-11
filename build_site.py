@@ -278,6 +278,7 @@ function pickCoupon(it){
   return m ? m[0] : '';
 }
 function copyTextOf(d){
+  if(d._siteContext) return d._siteContext;  // 悦拜短链保护版（u.jd.com 已套壳防扒，Boss 2026-09-11）
   if(d._originalContext) return d._originalContext;
   if(d._formatContext) return d._formatContext;
   const parts = [];
@@ -306,6 +307,24 @@ function cardHtml(d){
   // 不同链接（合集类多商品）各自出现在自己的文案位置
   const body = [];
   const seenLink = {};
+  if(d._siteContext){
+    // 悦拜短链保护版（Boss 2026-09-11）：整段用 _siteContext 渲染，不再从 list[]
+    // 直出裸 u.jd.com 链接行。独立成行的 URL 渲染为链接，其余为文案
+    d._siteContext.split('\\n').forEach(ln=>{
+      const s = ln.trim();
+      if(/^https?:\\/\\//i.test(s)){
+        const m = s.match(/https?:\\/\\/[^\\s"'，。；、）】]+/);
+        const u = m ? m[0] : s;
+        if(!seenLink[u]){ seenLink[u]=1;
+          body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>'); }
+      } else {
+        let t = esc(ln);
+        // 仅京东：元前数字（如 10.9元）放大+红
+        if(d.platform==='2') t = t.replace(/(\\d+(?:\\.\\d+)?)元/g, '<span class="pj">$1元<\\/span>');
+        body.push('<div class="ct">'+t+'</div>');
+      }
+    });
+  } else {
   (d.list||[]).forEach(it=>{
     if(it.content){
       let t = esc(it.content);
@@ -330,6 +349,7 @@ function cardHtml(d){
       body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>');
     }
   }
+  } // end else（非短链保护版才从 list[] 直出链接）
   const box = '<div class="content-box">'+(body.length?body.join(''):'<div class="ct">（无文案）</div>')+'</div>';
   const info = '<div class="content-section-info">'
     + '<div class="attr"><span class="pf '+pfCls(d.platform)+'">'+pfTxt(d.platform)+'</span>'
