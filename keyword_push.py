@@ -239,7 +239,10 @@ def flush(deals, log=print):
         return 0
     min_iv = int(_STATE.get("min_interval") or MIN_PUSH_INTERVAL)
     now = time.time()
-    due = len(pending) >= MAX_PER_ROUND or (now - _load_last_push()) >= min_iv
+    has_jd = any(str(d.get("platform")) == "2" for d in pending)
+    # Boss 2026-09-11 13:31 明令：京东「有新就发」——队列里有京东待推即立即推送，
+    # 不受「攒满 MAX_PER_ROUND 条」/「10 分钟间隔」限制；淘宝仍按间隔节流，随京东一起发出
+    due = has_jd or len(pending) >= MAX_PER_ROUND or (now - _load_last_push()) >= min_iv
     if not due:
         _save_pending(pending)
         return 0
