@@ -89,8 +89,11 @@ def _kill_bot_browser():
 
 
 def _find_jp_target():
+    """只认精品库【转链页 chain_link】，避免首页被误当转链页（首页没有输入框会 NO_PAGE，
+    进而触发无谓的「通道异常自愈」重启浏览器 —— Boss 2026-09-11 反馈的反复开关浏览器来源之一）。"""
     for t in jd_bot.targets():
-        if t.get("type") == "page" and "jingpinku.com" in (t.get("url") or ""):
+        u = t.get("url") or ""
+        if t.get("type") == "page" and "jingpinku.com" in u and "chain_link" in u:
             return t
     return None
 
@@ -104,7 +107,11 @@ def _get_cdp():
         pages = [x for x in jd_bot.targets() if x.get("type") == "page"]
         if not pages:
             raise RuntimeError("浏览器没有标签页")
-        cdp0 = jd_bot.CDP(pages[0]["webSocketDebuggerUrl"])
+        # 优先复用已经在 jingpinku 域下的标签页（如被重定向到首页的那个），把它导航回转链页；
+        # 没有才退而用第一个标签页。避免误改用户其它标签页。
+        jp_like = next((x for x in pages if "jingpinku.com" in (x.get("url") or "")), None)
+        page = jp_like or pages[0]
+        cdp0 = jd_bot.CDP(page["webSocketDebuggerUrl"])
         cdp0.navigate(JP_URL)
         cdp0.close()
         time.sleep(5)
