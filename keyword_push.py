@@ -33,7 +33,10 @@ CONFIG_FILE = os.path.join(BASE_DIR, "keyword_config.json")
 PUSHED_FILE = os.path.join(BASE_DIR, "keyword_pushed.json")  # 最近已推送线报 id 环形记录，防重
 PENDING_FILE = os.path.join(BASE_DIR, "keyword_pending.json")  # 攒着待发的命中线报（节流用）
 STATE_FILE = os.path.join(BASE_DIR, "keyword_state.json")      # {"last_push": 时间戳}
-MAX_PER_ROUND = 5        # 单条消息最多合并几条理报
+MAX_PER_ROUND = 10       # 单轮最多合并几条线报（京东7 + 淘宝3，按 Boss 70%/30% 配比）
+JD_QUOTA = 7             # 每轮京东最多推几条（70%）——各守各的配额，一边没货不多发另一边
+TB_QUOTA = 3             # 每轮淘宝最多推几条（30%）
+TB_SEP = "——"            # 淘宝多条合并时每条线报之间的分隔行（Boss 2026-09-11 明令，方便看清哪到哪是一条）
 MIN_PUSH_INTERVAL = 600  # 两次推送最小间隔（秒），默认10分钟；攒够 MAX_PER_ROUND 条可提前发
 WEBHOOK_MAX = 1800       # 企微 text 消息单条上限 2048 字节，这里留余量
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 绕开本机代理
@@ -238,13 +241,19 @@ def flush(deals, log=print):
     if not due:
         _save_pending(pending)
         return 0
-    batch = pending[:MAX_PER_ROUND]
-    # 京东/淘宝分组独立合并，不交叉；淘宝去掉底部 s.click.taobao.com 短链行
+    # 按 70/30 配比选取（Boss 2026-09-11 明令：京东70%、淘宝30%）
+    # 京东最多 7 条、淘宝最多 3 条，各守各的配额不互补（互补会破 30% 上限）；没选上的留 pending 下轮继续
     FOOTER = "————\n更多线报访问AI好价线报\nhttps://shengqian.cyou/"
-    jd = [d for d in batch if str(d.get("platform")) == "2"]
-    tb = [d for d in batch if str(d.get("platform")) != "2"]
+    jd_pool = [d for d in pending if str(d.get("platform")) == "2"]
+    tb_pool = [d for d in pending if str(d.get("platform")) != "2"]
+    jd = jd_pool[:JD_QUOTA]
+    tb = tb_pool[:TB_QUOTA]
+    if not jd and not tb:
+        _save_pending(pending)
+        return 0
     sent_ids, msgs, ok_any = [], [], False
-    for group, plat in ((jd, "京东"), (tb, "淘宝")):
+    # 淘宝多条合并时每条之间用「——」单独一行隔开（Boss 明令）；京东维持空行分隔
+    for group, plat, sep in ((jd, "京东", "\n\n"), (tb, "淘宝", "\n" + TB_SEP + "\n")):
         if not group:
             continue
         items = []
@@ -257,7 +266,7 @@ def flush(deals, log=print):
         # 合并后太长：优先删最长的线报，删到一条消息能发完为止（至少保留1条，兜底分片）
         dropped = []
         while items:
-            total = len(("\n\n".join(t for _, t in items) + "\n" + FOOTER).encode("utf-8"))
+            total = len((sep.join(t for _, t in items) + "\n" + FOOTER).encode("utf-8"))
             if total <= WEBHOOK_MAX or len(items) == 1:
                 break
             longest = max(items, key=lambda x: len(x[1].encode("utf-8")))
@@ -265,7 +274,7 @@ def flush(deals, log=print):
             dropped.append(longest[0])
         if not items:
             continue
-        text = "\n\n".join(t for _, t in items) + "\n" + FOOTER
+        text = sep.join(t for _, t in items) + "\n" + FOOTER
         ok, msg = _send(text, log)
         extra = f"，删超长{len(dropped)}条" if dropped else ""
         msgs.append(f"{plat}{len(items)}条{extra}({msg})")
