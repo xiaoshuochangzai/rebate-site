@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""关键词订阅推送：新线报命中关键词 → 企业微信智能机器人（长连接 aibot_send_msg）推送。
+"""线报推送：京东新线报全推（不限关键词，Boss 2026-09-11 明令）+ 淘宝命中关键词才推 → 企业微信智能机器人。
 
 配置文件 keyword_config.json（与本文件同目录）：
 {
@@ -216,8 +216,9 @@ def _send(text, log=print):
 
 
 def flush(deals, log=print):
-    """推送本轮命中关键词的新线报。deals=本轮新入库线报列表（时间倒序）。
-    节流：命中先攒进 pending，攒够 MAX_PER_ROUND 条 或 距上次推送超过 min_interval 秒才发一条汇总。
+    """推送本轮新线报（京东全推；淘宝需命中关键词）。deals=本轮新入库线报列表（时间倒序）。
+    节流：先进 pending，攒够 MAX_PER_ROUND 条 或 距上次推送超过 min_interval 秒才发；
+    发送时按 70/30 配比（京东≤7 + 淘宝≤3）。
     返回推送条数。每次调用都重读配置（改 keyword_config.json 热生效）。"""
     _load_config()
     if not _STATE["keywords"]:
@@ -230,7 +231,8 @@ def flush(deals, log=print):
         did = str(d.get("id"))
         if did in pushed_set or did in pending_ids:
             continue
-        if _hit_keywords(d):
+        # Boss 2026-09-11 13:13 明令：京东不限关键词，有新线报就推；淘宝仍按关键词命中
+        if str(d.get("platform")) == "2" or _hit_keywords(d):
             pending.append(d)
             pending_ids.add(did)
     if not pending:
