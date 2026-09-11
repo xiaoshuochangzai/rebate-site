@@ -20,11 +20,19 @@ import subprocess
 import sys
 import time
 
-import build_site
-import cf_kv
-import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
-import keyword_push
-import yuebai_short  # u.jd.com → 悦拜短链，防扒站（只影响站上展示 _siteContext，企微推送仍用原文）
+try:
+    import build_site
+    import cf_kv
+    import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
+    import keyword_push
+    import yuebai_short  # u.jd.com → 悦拜短链，防扒站（只影响站上展示 _siteContext，企微推送仍用原文）
+except Exception:
+    # pythonw 无窗口：import 挂了进程会无声消失，不落盘 Boss 永远查不到原因
+    import traceback as _tb
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor_err.txt"),
+              "a", encoding="utf-8") as _f:
+        _f.write(time.strftime("[%Y-%m-%d %H:%M:%S] 监控启动 import 失败：\n") + _tb.format_exc() + "\n")
+    raise
 
 # 关键词推送队列：本轮新入库的线报先进这里，轮末统一交给 keyword_push.flush
 KW_QUEUE = []
@@ -251,16 +259,21 @@ def fetch_latest(cfg, pages=2):
 
 
 def acquire_single_instance():
-    """单实例锁：已有监控在跑时本实例直接退出（防双开互踩覆盖 deals.json）。"""
+    """单实例锁：已有监控在跑时本实例直接退出（防双开互踩覆盖 deals.json）。
+    判定必须核对 cmdline 里真的有 incremental.py——Windows 会快速复用 PID，
+    只看 is_running() 会把复用旧 PID 的无关 python 进程误判成监控，
+    导致 stop 后 start 的新监控静默退出（Boss 遇到的「重启不生效」根因之一）。"""
     import psutil
     if os.path.exists(LOCK_FILE):
         try:
             old = int(open(LOCK_FILE, encoding="utf-8").read().strip())
             if old != os.getpid():
                 p = psutil.Process(old)
-                if p.is_running() and "python" in (p.name() or "").lower():
+                cl = " ".join(p.cmdline() or [])
+                if p.is_running() and "incremental.py" in cl:
                     log(f"已有监控实例在跑（PID {old}），本实例退出")
                     sys.exit(0)
+                log(f"锁文件里的 PID {old} 不是监控进程（残留锁/PID被复用），直接接管")
         except (psutil.NoSuchProcess, ValueError, ProcessLookupError):
             pass  # 旧实例已死，锁过期，接管
         except Exception:
@@ -303,6 +316,12 @@ def main():
         sys.stderr = _Tee(sys.stderr, _logf)
     except Exception:
         pass
+    def _stamp(fn):
+        p = os.path.join(BASE_DIR, fn)
+        return time.strftime("%m-%d %H:%M", time.localtime(os.path.getmtime(p))) if os.path.exists(p) else "?"
+    log("=== 监控启动 PID=%d | 代码版本: incremental@%s keyword_push@%s build_site@%s yuebai_short@%s ==="
+        % (os.getpid(), _stamp("incremental.py"), _stamp("keyword_push.py"),
+           _stamp("build_site.py"), _stamp("yuebai_short.py")))
     acquire_single_instance()
     # 企微智能机器人长连接（关键词推送通道）：后台线程，断了自动重连
     try:
