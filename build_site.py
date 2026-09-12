@@ -154,6 +154,8 @@ max-height:196px;overflow:hidden;transition:max-height .3s}
 .content-box a.lnk{display:block;font-size:12px;line-height:1.7;color:#3C6FE8;
 word-break:break-all;margin:1px 0;text-decoration:none}
 .content-box a.lnk:hover{color:var(--jd);text-decoration:underline}
+.content-box a.lnki{color:#3C6FE8;word-break:break-all;text-decoration:none}
+.content-box a.lnki:hover{color:var(--jd);text-decoration:underline}
 
 .content-section-info{margin-top:auto;padding-top:8px;min-height:38px;display:flex;
 justify-content:space-between;align-items:center;border-top:1px solid #F0F1F4}
@@ -249,6 +251,19 @@ let DEALS = __DATA__;
 const PAGE_SIZE = 60;
 let filter = '2', kw = '', shown = 0;  // 默认京东（京东第一、淘宝第二，无「全部」）
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function escWithLinks(ln){
+  // 转义整行并把行内所有 http(s) 链接转成可点链接（修复行中券链显示灰色不可点）
+  const re = /https?:\\/\\/[^\\s"'，。；、）】]+/g;
+  let out = '', last = 0, m;
+  while((m = re.exec(ln)) !== null){
+    out += esc(ln.slice(last, m.index));
+    const eu = esc(m[0]);
+    out += '<a class="lnki" href="'+eu+'" target="_blank" rel="noopener">'+eu+'</a>';
+    last = m.index + m[0].length;
+  }
+  out += esc(ln.slice(last));
+  return out;
+}
 function rel(t){
   if(!t) return '';
   const d = new Date(String(t).replace(/-/g,'/'));
@@ -312,13 +327,15 @@ function cardHtml(d){
     // 直出裸 u.jd.com 链接行。独立成行的 URL 渲染为链接，其余为文案
     d._siteContext.split('\\n').forEach(ln=>{
       const s = ln.trim();
-      if(/^https?:\\/\\//i.test(s)){
-        const m = s.match(/https?:\\/\\/[^\\s"'，。；、）】]+/);
-        const u = m ? m[0] : s;
+      const mStart = s.match(/^https?:\\/\\/[^\\s"'，。；、）】]+/);
+      if(mStart){
+        const u = mStart[0];
         if(!seenLink[u]){ seenLink[u]=1;
           body.push('<a class="lnk" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u)+'</a>'); }
-      } else {
-        let t = esc(ln);
+        const rest = s.slice(u.length).trim();
+        if(rest) body.push('<div class="ct">'+escWithLinks(rest)+'</div>');  // 链接后跟的尾巴文字不丢
+      } else if(ln){
+        let t = escWithLinks(ln);  // 行中链接也转可点（修复券链灰色不可点，Boss 2026-09-12）
         // 仅京东：元前数字（如 10.9元）放大+红
         if(d.platform==='2') t = t.replace(/(\\d+(?:\\.\\d+)?)元/g, '<span class="pj">$1元<\\/span>');
         body.push('<div class="ct">'+t+'</div>');
@@ -327,7 +344,7 @@ function cardHtml(d){
   } else {
   (d.list||[]).forEach(it=>{
     if(it.content){
-      let t = esc(it.content);
+      let t = escWithLinks(it.content);  // 行中链接也转可点
       // 仅京东：元前数字（如 10.9元）放大+红
       if(d.platform==='2') t = t.replace(/(\\d+(?:\\.\\d+)?)元/g, '<span class="pj">$1元<\\/span>');
       body.push('<div class="ct">'+t+'</div>');

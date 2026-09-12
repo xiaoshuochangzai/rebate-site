@@ -134,8 +134,10 @@ def _save_last_push(ts):
 
 
 def _fmt_one(deal):
-    """转链后的完整文案，原样输出（链接什么样就什么样，不改写、不加装饰）。"""
-    txt = (deal.get("_originalContext") or deal.get("_formatContext") or "").strip()
+    """转链后的完整文案，原样输出（链接什么样就什么样，不改写、不加装饰）。
+    Boss 2026-09-12 明令：京东优先用 _siteContext（悦拜短链版），企微群里不再出裸 u.jd.com；
+    淘宝/无保护的旧数据自动回退 _originalContext 原文。"""
+    txt = (deal.get("_siteContext") or deal.get("_originalContext") or deal.get("_formatContext") or "").strip()
     if txt:
         return txt
     parts = []
