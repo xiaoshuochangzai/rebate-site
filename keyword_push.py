@@ -37,6 +37,7 @@ MAX_PER_ROUND = 10       # 单轮最多合并几条线报（京东7 + 淘宝3，
 JD_QUOTA = 7             # 每轮京东最多推几条（70%）——各守各的配额，一边没货不多发另一边
 TB_QUOTA = 3             # 每轮淘宝最多推几条（30%）
 TB_SEP = "——"            # 淘宝多条合并时每条线报之间的分隔行（Boss 2026-09-11 明令，方便看清哪到哪是一条）
+JD_SEND_GAP = 0.6        # 京东逐条发送时的间隔（秒），防企微限频（Boss 2026-09-16：京东一条一条发）
 MIN_PUSH_INTERVAL = 600  # 两次推送最小间隔（秒），默认10分钟；攒够 MAX_PER_ROUND 条可提前发
 WEBHOOK_MAX = 1800       # 企微 text 消息单条上限 2048 字节，这里留余量
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 绕开本机代理
@@ -223,7 +224,8 @@ def flush(deals, log=print):
     发送时按 70/30 配比（京东≤7 + 淘宝≤3）。
     返回推送条数。每次调用都重读配置（改 keyword_config.json 热生效）。"""
     _load_config()
-    if not _STATE["keywords"]:
+    # 京东不限关键词，必推榜新品也不看关键词；两者都没有时才因为没有关键词直接返回
+    if not _STATE["keywords"] and not any(d.get("_bitui") for d in deals):
         return 0
     pushed_ids = _load_pushed()
     pushed_set = set(pushed_ids)
@@ -233,8 +235,9 @@ def flush(deals, log=print):
         did = str(d.get("id"))
         if did in pushed_set or did in pending_ids:
             continue
-        # Boss 2026-09-11 13:13 明令：京东不限关键词，有新线报就推；淘宝仍按关键词命中
-        if str(d.get("platform")) == "2" or _hit_keywords(d):
+        # Boss 2026-09-11 13:13 明令：京东不限关键词，有新线报就推
+        # Boss 2026-09-16 明令：淘宝只推必推榜新品（_bitui 标记），线报不再按关键词推
+        if str(d.get("platform")) == "2" or d.get("_bitui"):
             pending.append(d)
             pending_ids.add(did)
     if not pending:
@@ -259,32 +262,41 @@ def flush(deals, log=print):
         _save_pending(pending)
         return 0
     sent_ids, msgs, ok_any = [], [], False
-    # 淘宝多条合并时每条之间用「——」单独一行隔开（Boss 明令）；京东维持空行分隔
-    for group, plat, sep in ((jd, "京东", "\n\n"), (tb, "淘宝", "\n" + TB_SEP + "\n")):
-        if not group:
+    # Boss 2026-09-16 明令：京东线报一条一条单独发，不再两条以上合并成一条
+    for d in jd:
+        t = _fmt_one(d).strip()
+        if not t:
+            sent_ids.append(str(d.get("id")))  # 空文案没得发，直接标已推，防死循环
             continue
-        items = []
-        for d in group:
-            t = _fmt_one(d).strip()
-            if plat == "淘宝":
-                t = "\n".join(ln for ln in t.split("\n") if "s.click.taobao.com" not in ln).strip()
-            if t:
-                items.append((d, t))
-        # 合并后太长：优先删最长的线报，删到一条消息能发完为止（至少保留1条，兜底分片）
-        dropped = []
-        while items:
-            total = len((sep.join(t for _, t in items) + "\n" + FOOTER).encode("utf-8"))
-            if total <= WEBHOOK_MAX or len(items) == 1:
-                break
-            longest = max(items, key=lambda x: len(x[1].encode("utf-8")))
-            items.remove(longest)
-            dropped.append(longest[0])
-        if not items:
-            continue
+        ok, msg = _send(t + "\n" + FOOTER, log)
+        msgs.append(f"京东1条({msg})")
+        if ok:
+            sent_ids.append(str(d.get("id")))
+            ok_any = True
+        time.sleep(JD_SEND_GAP)
+    # 淘宝（必推榜新品）维持多条合并一条发，每条之间用「——」单独一行隔开（Boss 明令）
+    items = []
+    for d in tb:
+        t = _fmt_one(d).strip()
+        if not d.get("_bitui"):  # 只有老线报文案才需要滤掉 s.click 行
+            t = "\n".join(ln for ln in t.split("\n") if "s.click.taobao.com" not in ln).strip()
+        if t:
+            items.append((d, t))
+    # 合并后太长：优先删最长的线报，删到一条消息能发完为止（至少保留1条，兜底分片）
+    dropped = []
+    sep = "\n" + TB_SEP + "\n"
+    while items:
+        total = len((sep.join(t for _, t in items) + "\n" + FOOTER).encode("utf-8"))
+        if total <= WEBHOOK_MAX or len(items) == 1:
+            break
+        longest = max(items, key=lambda x: len(x[1].encode("utf-8")))
+        items.remove(longest)
+        dropped.append(longest[0])
+    if items:
         text = sep.join(t for _, t in items) + "\n" + FOOTER
         ok, msg = _send(text, log)
         extra = f"，删超长{len(dropped)}条" if dropped else ""
-        msgs.append(f"{plat}{len(items)}条{extra}({msg})")
+        msgs.append(f"淘宝{len(items)}条{extra}({msg})")
         if ok:
             sent_ids.extend(str(d.get("id")) for d, _ in items)
             # 被删掉的太长线报直接标记已推（丢弃），不留在队列里死循环

@@ -58,6 +58,8 @@ SEEN_FILE = os.path.join(BASE_DIR, "seen_ids.json")
 PENDING_FILE = os.path.join(BASE_DIR, "pending.json")
 DTK_SEEN_FILE = os.path.join(BASE_DIR, "seen_dtk.json")
 DTK_PENDING_FILE = os.path.join(BASE_DIR, "pending_dtk.json")
+BITUI_SEEN_FILE = os.path.join(BASE_DIR, "seen_bitui.json")  # 必推榜已见商品 id（Boss 2026-09-16：只推新进榜）
+BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
 LOCK_FILE = os.path.join(BASE_DIR, "monitor.lock")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
 DEBOUNCE = 20  # 防抖窗口：KV 直写便宜又即时，20s 内的变更合并成一次写
@@ -195,7 +197,7 @@ def poll_dtk(deals, have_ids):
                 return True
             deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
             deals.insert(0, deal)
-            KW_QUEUE.append(deal)  # 关键词推送队列
+            # 注：Boss 2026-09-16 明令——淘宝线报不再推企微，只推必推榜新品（见 poll_bitui）
             have_ids.add(deal["id"])
             dtk_seen.add(deal["id"])
             inserted += 1
@@ -219,6 +221,44 @@ def poll_dtk(deals, have_ids):
         if d:
             d.close()
     return inserted
+
+
+def poll_bitui():
+    """大淘客【必推榜】新品监听（Boss 2026-09-16 明令：淘宝推送只认必推榜）。
+
+    新商品进榜 → 转链（get-privilege，0.5s/条）→ 进推送队列；没新品就不推。
+    首次运行建基线：现存榜单全部记 seen 跳过，防一次性推 66 条炸群。
+    """
+    import dtk_bitui
+    seen = set(load_json(BITUI_SEEN_FILE, []))
+    items = dtk_bitui.fetch_rank()
+    if not items:
+        return 0
+    ids = [str(it.get("id")) for it in items if it.get("id")]
+    if not seen:
+        seen.update(ids)
+        save_json(BITUI_SEEN_FILE, sorted(seen))
+        log(f"必推榜基线已建立：现存 {len(ids)} 条全部跳过，只推之后新进榜的")
+        return 0
+    fresh = [it for it in items if str(it.get("id")) not in seen][:BITUI_MAX_PER_ROUND]
+    got = 0
+    for it in fresh:
+        gid = str(it.get("id"))
+        try:
+            conv = dtk_bitui.convert_item(it)
+            if not conv or not conv.get("tpwd"):
+                log(f"必推榜 {gid} 转链失败（无淘口令），下轮重试")
+                continue
+            KW_QUEUE.append(dtk_bitui.to_deal(it, conv))
+            seen.add(gid)
+            got += 1
+            log(f"必推榜新品 {gid} | {it.get('d_title', '')[:26]}")
+        except Exception as e:
+            log(f"必推榜 {gid} 异常：{str(e)[:80]}")
+        time.sleep(3)  # 单条间隔，防风控
+    if got:
+        save_json(BITUI_SEEN_FILE, sorted(seen)[-3000:])
+    return got
 
 
 def has_link(deal):
@@ -441,6 +481,12 @@ def main():
                     mark_dirty(f"dtk x{n}")
             except Exception as e:
                 log(f"淘宝轮询异常：{str(e)[:100]}")
+
+            # 大淘客必推榜新品（Boss 2026-09-16：淘宝推送只认这个榜，新进榜才推）
+            try:
+                poll_bitui()
+            except Exception as e:
+                log(f"必推榜轮询异常：{str(e)[:100]}")
 
             # 关键词订阅推送（企微智能机器人长连接；配置热生效）
             try:
