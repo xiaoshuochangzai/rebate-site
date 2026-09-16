@@ -37,6 +37,8 @@ MAX_PER_ROUND = 10       # 单轮最多合并几条线报（京东7 + 淘宝3，
 JD_QUOTA = 7             # 每轮京东最多推几条（70%）——各守各的配额，一边没货不多发另一边
 TB_QUOTA = 3             # 每轮淘宝最多推几条（30%）
 TB_SEP = "——"            # 淘宝多条合并时每条线报之间的分隔行（Boss 2026-09-11 明令，方便看清哪到哪是一条）
+JD_TAG = "【京东】"       # 京东线报消息开头平台标识（Boss 2026-09-16 明令）
+FOOTER_EVERY = 5         # 每发满 5 条消息才带一次底部站链尾，其余不带（Boss 2026-09-16 明令）
 JD_SEND_GAP = 0.6        # 京东逐条发送时的间隔（秒），防企微限频（Boss 2026-09-16：京东一条一条发）
 MIN_PUSH_INTERVAL = 600  # 两次推送最小间隔（秒），默认10分钟；攒够 MAX_PER_ROUND 条可提前发
 WEBHOOK_MAX = 1800       # 企微 text 消息单条上限 2048 字节，这里留余量
@@ -126,12 +128,30 @@ def _save_pending(items):
     _save_json(PENDING_FILE, items[-200:])
 
 
+def _load_state():
+    return _load_json(STATE_FILE, {}) or {}
+
+
 def _load_last_push():
-    return float(_load_json(STATE_FILE, {}).get("last_push", 0) or 0)
+    return float(_load_state().get("last_push", 0) or 0)
 
 
 def _save_last_push(ts):
-    _save_json(STATE_FILE, {"last_push": ts})
+    st = _load_state()
+    st["last_push"] = ts
+    _save_json(STATE_FILE, st)
+
+
+def _bump_sent(n=1):
+    """累计已发消息条数（用于「每 5 条才带一次站链尾」），返回本次发完后的累计值。"""
+    st = _load_state()
+    st["sent_cnt"] = int(st.get("sent_cnt", 0) or 0) + n
+    _save_json(STATE_FILE, st)
+    return st["sent_cnt"]
+
+
+def _load_sent():
+    return int(_load_state().get("sent_cnt", 0) or 0)
 
 
 def _fmt_one(deal):
@@ -268,8 +288,10 @@ def flush(deals, log=print):
         if not t:
             sent_ids.append(str(d.get("id")))  # 空文案没得发，直接标已推，防死循环
             continue
-        ok, msg = _send(t + "\n" + FOOTER, log)
-        msgs.append(f"京东1条({msg})")
+        sent_cnt = _bump_sent()  # 每 5 条才带一次站链尾（Boss 2026-09-16 明令）
+        tail = "\n" + FOOTER if sent_cnt % FOOTER_EVERY == 0 else ""
+        ok, msg = _send(JD_TAG + t + tail, log)
+        msgs.append(f"京东1条({'带站链尾' if tail else '无尾'})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))
             ok_any = True
@@ -293,10 +315,12 @@ def flush(deals, log=print):
         items.remove(longest)
         dropped.append(longest[0])
     if items:
-        text = sep.join(t for _, t in items) + "\n" + FOOTER
+        sent_cnt = _bump_sent()  # 与京东共用一个计数：每 5 条消息才带一次站链尾
+        tail = "\n" + FOOTER if sent_cnt % FOOTER_EVERY == 0 else ""
+        text = sep.join(t for _, t in items) + tail
         ok, msg = _send(text, log)
         extra = f"，删超长{len(dropped)}条" if dropped else ""
-        msgs.append(f"淘宝{len(items)}条{extra}({msg})")
+        msgs.append(f"淘宝{len(items)}条{extra}({'带站链尾' if tail else '无尾'})({msg})")
         if ok:
             sent_ids.extend(str(d.get("id")) for d, _ in items)
             # 被删掉的太长线报直接标记已推（丢弃），不留在队列里死循环
