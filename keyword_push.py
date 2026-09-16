@@ -315,12 +315,12 @@ def flush(deals, log=print):
         items.remove(longest)
         dropped.append(longest[0])
     if items:
-        sent_cnt = _bump_sent()  # 与京东共用一个计数：每 5 条消息才带一次站链尾
-        tail = "\n" + FOOTER if sent_cnt % FOOTER_EVERY == 0 else ""
-        text = sep.join(t for _, t in items) + tail
+        # Boss 2026-09-16 明令：淘宝线报一律不带底部站链尾（也不计入「每5条」的计数，
+        # 计数只按京东消息条数走，避免淘宝消息打断京东的节奏）
+        text = sep.join(t for _, t in items)
         ok, msg = _send(text, log)
         extra = f"，删超长{len(dropped)}条" if dropped else ""
-        msgs.append(f"淘宝{len(items)}条{extra}({'带站链尾' if tail else '无尾'})({msg})")
+        msgs.append(f"淘宝{len(items)}条{extra}(无尾)({msg})")
         if ok:
             sent_ids.extend(str(d.get("id")) for d, _ in items)
             # 被删掉的太长线报直接标记已推（丢弃），不留在队列里死循环
