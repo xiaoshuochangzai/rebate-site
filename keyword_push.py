@@ -296,36 +296,21 @@ def flush(deals, log=print):
             sent_ids.append(str(d.get("id")))
             ok_any = True
         time.sleep(JD_SEND_GAP)
-    # 淘宝（必推榜新品）维持多条合并一条发，每条之间用「——」单独一行隔开（Boss 明令）
-    items = []
+    # Boss 2026-10-07 明令：淘宝（必推榜）也改成一条一条单独发，不再多条合并
     for d in tb:
         t = _fmt_one(d).strip()
         if not d.get("_bitui"):  # 只有老线报文案才需要滤掉 s.click 行
             t = "\n".join(ln for ln in t.split("\n") if "s.click.taobao.com" not in ln).strip()
-        if t:
-            items.append((d, t))
-    # 合并后太长：优先删最长的线报，删到一条消息能发完为止（至少保留1条，兜底分片）
-    dropped = []
-    sep = "\n" + TB_SEP + "\n"
-    while items:
-        total = len((sep.join(t for _, t in items) + "\n" + FOOTER).encode("utf-8"))
-        if total <= WEBHOOK_MAX or len(items) == 1:
-            break
-        longest = max(items, key=lambda x: len(x[1].encode("utf-8")))
-        items.remove(longest)
-        dropped.append(longest[0])
-    if items:
-        # Boss 2026-09-16 明令：淘宝线报一律不带底部站链尾（也不计入「每5条」的计数，
-        # 计数只按京东消息条数走，避免淘宝消息打断京东的节奏）
-        text = sep.join(t for _, t in items)
-        ok, msg = _send(text, log)
-        extra = f"，删超长{len(dropped)}条" if dropped else ""
-        msgs.append(f"淘宝{len(items)}条{extra}(无尾)({msg})")
+        if not t:
+            sent_ids.append(str(d.get("id")))  # 空文案没得发，直接标已推，防死循环
+            continue
+        # 淘宝消息一律不带底部站链尾，也不计入「每5条」的计数（计数只按京东走）
+        ok, msg = _send(t, log)
+        msgs.append(f"淘宝1条(无尾)({msg})")
         if ok:
-            sent_ids.extend(str(d.get("id")) for d, _ in items)
-            # 被删掉的太长线报直接标记已推（丢弃），不留在队列里死循环
-            pushed_ids.extend(str(d.get("id")) for d in dropped)
+            sent_ids.append(str(d.get("id")))
             ok_any = True
+        time.sleep(JD_SEND_GAP)
     if ok_any:
         pushed_ids.extend(sent_ids)
         _save_pushed(pushed_ids)
