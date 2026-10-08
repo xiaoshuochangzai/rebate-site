@@ -12,6 +12,7 @@
     python incremental.py --init     # 重建基线（把当前线报标记为已见，不入库）
     python incremental.py --interval 120
 """
+import hashlib
 import json
 import atexit
 import os
@@ -127,9 +128,18 @@ def mark_dirty(note):
     DIRTY["flag"] = True
 
 
+_LAST_KV = {"hash": None}  # 最近一次「成功」写入 KV 的内容哈希（失败不更新，下次照常重试）
+
+
+def _kv_hash(deals):
+    return hashlib.md5(
+        json.dumps(deals, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
 def flush_if_due(force=False):
     """防抖到期（或 force）就 KV 直写一次（即时生效，免 CF 构建）；
-    KV 失败退回 git 推送兜底。"""
+    内容和上次成功写入完全一致就跳过（静默期不白烧额度/不放大 504 暴露面）；
+    KV 失败（含 cf_kv 内部重试 2 次后仍失败）退回 git 推送兜底。"""
     if not DIRTY["flag"]:
         return
     waited = time.time() - DIRTY["since"]
@@ -137,8 +147,14 @@ def flush_if_due(force=False):
         log(f"防抖中：{int(DEBOUNCE - waited)}s 后合并推送")
         return
     deals = load_json(os.path.join(SITE_DIR, "deals.json"), [])
+    h = _kv_hash(deals)
+    if h == _LAST_KV["hash"]:
+        DIRTY["flag"] = False
+        log(f"KV 内容未变，跳过直写（共 {len(deals)} 条）")
+        return
     ok, msg = cf_kv.put_deals(deals)
     if ok:
+        _LAST_KV["hash"] = h
         log(f"KV 直写上线（防抖 {int(waited)}s，共 {len(deals)} 条）")
         DIRTY["flag"] = False
         return
