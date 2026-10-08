@@ -82,8 +82,10 @@ def _kill_bot_browser():
           "Where-Object { $_.CommandLine -like '*jd-bot-profile*' } | "
           "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
     try:
+        # CREATE_NO_WINDOW：pythonw 拉 powershell 不再弹黑窗口（Boss 2026-10-08 反馈）
         subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                       capture_output=True, timeout=30)
+                       capture_output=True, timeout=30,
+                       creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0))
     except Exception:
         pass
 

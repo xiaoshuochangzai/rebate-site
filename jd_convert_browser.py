@@ -33,7 +33,8 @@ def _kill_bot_browser():
           "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
     try:
         subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                       capture_output=True, timeout=30)
+                       capture_output=True, timeout=30,
+                       creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0))
     except Exception:
         pass
 

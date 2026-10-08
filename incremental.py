@@ -38,6 +38,11 @@ except Exception:
 KW_QUEUE = []
 _ROUND = [0]  # 轮询轮数计数（用于周期性打印企微连接状态）
 
+# pythonw（无窗口）拉起子进程时，Windows 默认会给他弹一个黑色控制台窗口。
+# 监控里 git 兜底推送 / powershell 杀浏览器都会被 Boss 看到「凭空弹窗」，
+# 一律加 CREATE_NO_WINDOW 静默执行（Boss 2026-10-08 反馈）。
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
 _JD_PRICE_RE = re.compile(r"(?<![满每减立降])(\d+(?:\.\d+)?)元")
 
 
@@ -92,14 +97,14 @@ def git_push(tag):
         ["git", "commit", "-m", tag],
     ]
     for c in cmds:
-        subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env)
+        subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env, creationflags=NO_WINDOW)
     # 三路重试：直连 → 50111 → 7890
     for proxy in (None, "http://127.0.0.1:50111", "http://127.0.0.1:7890"):
         c = ["git", "push", "origin", "main"]
         if proxy:
             c = ["git", "-c", f"http.proxy={proxy}", "-c", f"https.proxy={proxy}",
                  "push", "origin", "main"]
-        r = subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env)
+        r = subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env, creationflags=NO_WINDOW)
         if r.returncode == 0:
             return True
     return False
