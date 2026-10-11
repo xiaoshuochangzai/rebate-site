@@ -15,6 +15,12 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import jd_bot
 
+# 纯 API 转链引擎（Boss 2026-10-11 拍板：API 优先，UI 降级为兜底）
+try:
+    import jp_api
+except Exception:
+    jp_api = None  # 引擎缺席时自动全走老 UI 路径
+
 JP_URL = "https://www.jingpinku.com/tools/chain_link.do"
 _DELAY = float(os.environ.get("JP_CONV_DELAY", "4"))
 
@@ -206,19 +212,57 @@ def apply_output(deal, out_text):
 
 
 def convert_all_browser(deals, cfg=None, on_progress=None):
-    """批量转链（drop-in：与 jd_convert_browser 同签名同返回）。"""
+    """批量转链（drop-in：与 jd_convert_browser 同签名同返回）。
+
+    Boss 2026-10-11：纯 API 优先（jp_api 抓包接口直调，~1s/条），浏览器 UI 降级为兜底
+    ——API 挂了才碰浏览器，CDP 熔断/通道僵死从「每轮都踩」降为「罕见兜底」。
+    登录态熔断只约束 UI 通道，不拦 API。"""
     stats = {"ok": 0, "fail": 0, "skipped": 0}
     out = []
-    # 登录态失效冷却期内：直接跳过，不碰浏览器（防反复开关，Boss 2026-09-11）
-    if _login_lost():
-        print(f"  !! 精品库登录态失效冷却中，跳过本轮转链（{len(deals)} 条留待转队列）", flush=True)
-        stats["skipped"] = len(deals)
-        return deals, stats
-    cdp = _get_cdp()
+    ui_fused = _login_lost()  # 冷却结束会顺手清掉磁盘标记（_login_lost 自带）
+    if ui_fused and jp_api is not None:
+        print("  !! 精品库登录态冷却中：浏览器 UI 跳过，转链走 API 通道", flush=True)
+    cdp = None  # 懒加载：只有 UI 兜底真正需要时才碰浏览器
     last_kill = 0.0  # 浏览器重启冷却（防通道抖动时反复启关浏览器，Boss 2026-09-07）
     for i, deal in enumerate(deals):
         material = build_material(deal)
         print(f"  [{i+1}/{len(deals)}] 精品库转链：{material.splitlines()[0][:30]}", flush=True)
+        # ---- 纯 API 优先（Boss 2026-10-11）----
+        if jp_api is not None:
+            ok_a, out_a, imgs = False, "", []
+            try:
+                ok_a, out_a, imgs = jp_api.convert_material(material)
+            except Exception as e:
+                print(f"    ! API 通道异常（转 UI 兜底）：{str(e)[:60]}", flush=True)
+            if ok_a and out_a:
+                apply_output(deal, out_a)
+                if imgs and not deal.get("images"):
+                    deal["_jp_images"] = imgs[:3]  # 接口白送的主图，存着备用
+                stats["ok"] += 1
+                print(f"    ✓api {out_a.splitlines()[0][:40]}", flush=True)
+                out.append(deal)
+                if on_progress:
+                    try:
+                        on_progress(out, stats)
+                    except Exception:
+                        pass
+                time.sleep(_DELAY)
+                continue
+            if out_a:
+                print(f"    ! API 返回失败（转 UI 兜底）：{out_a[:60]}", flush=True)
+        # ---- 浏览器 UI 兜底（原逻辑不动）----
+        if ui_fused:
+            print("    !! 登录态冷却中，本条留待转队列", flush=True)
+            stats["skipped"] += 1
+            continue
+        if cdp is None:
+            try:
+                cdp = _get_cdp()
+            except Exception as e:
+                print(f"    ✗ 打不开转链页：{str(e)[:60]}", flush=True)
+                stats["fail"] += 1
+                out.append(deal)
+                continue
         try:
             d = _page_convert(cdp, material)
             if d.get("ok") and d.get("out"):
