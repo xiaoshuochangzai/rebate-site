@@ -245,38 +245,58 @@ def poll_dtk(deals, have_ids):
 
 
 def poll_bitui():
-    """大淘客【必推榜】新品监听（Boss 2026-09-16 明令：淘宝推送只认必推榜）。
+    """大淘客三榜新品监听（Boss 2026-09-16 淘宝只推必推榜；2026-10-13 明令新增
+    热销榜 top-sell + 热推榜 top-hot，三榜一起监听、跨榜去重）。
 
     新商品进榜 → 转链（get-privilege，0.5s/条）→ 进推送队列；没新品就不推。
-    首次运行建基线：现存榜单全部记 seen 跳过，防一次性推 66 条炸群。
+    跨榜去重：三榜共用 dataoke 商品 id，seen_bitui.json 全局一份，进过任何一榜
+    就不再推（Boss 明令「三个类目都有重复的商品，需要增加去重功能」）。
+    首次运行建基线：三榜现存全部记 seen 跳过，防一次性轰炸。
     """
     import dtk_bitui
     seen = set(load_json(BITUI_SEEN_FILE, []))
-    items = dtk_bitui.fetch_rank()
-    if not items:
+    # 依次拉三榜（顺序：必推榜 → 热销榜 → 热推榜），拉取失败跳过该榜本轮不推
+    lists = []
+    for kind in dtk_bitui.RANK_ORDER:
+        lst = dtk_bitui.fetch_rank(kind)
+        if lst:
+            lists.append(lst)
+        else:
+            log(f"{dtk_bitui.RANKS[kind][2]} 本轮拉取为空/失败，跳过")
+        time.sleep(0.5)  # 榜与榜之间小间隔
+    if not lists:
         return 0
-    ids = [str(it.get("id")) for it in items if it.get("id")]
-    if not seen:
-        seen.update(ids)
-        save_json(BITUI_SEEN_FILE, sorted(seen))
-        log(f"必推榜基线已建立：现存 {len(ids)} 条全部跳过，只推之后新进榜的")
+    MULTI_MARK = "_multi3"  # 三榜扩容标记：无标记 = 新榜未建基线
+    if not seen or MULTI_MARK not in seen:
+        # 基线：三榜现存 id 全部并入 seen 跳过，只推之后新进榜的（防一次性轰炸）
+        for lst in lists:
+            seen.update(str(it.get("id")) for it in lst if it.get("id"))
+        seen.add(MULTI_MARK)
+        save_json(BITUI_SEEN_FILE, sorted(seen)[-3000:])
+        log(f"三榜基线已建立：现存 {len(seen) - 1} 条全部跳过，只推之后新进榜的")
         return 0
-    fresh = [it for it in items if str(it.get("id")) not in seen][:BITUI_MAX_PER_ROUND]
     got = 0
-    for it in fresh:
-        gid = str(it.get("id"))
-        try:
-            conv = dtk_bitui.convert_item(it)
-            if not conv or not conv.get("tpwd"):
-                log(f"必推榜 {gid} 转链失败（无淘口令），下轮重试")
-                continue
-            KW_QUEUE.append(dtk_bitui.to_deal(it, conv))
-            seen.add(gid)
-            got += 1
-            log(f"必推榜新品 {gid} | {it.get('d_title', '')[:26]}")
-        except Exception as e:
-            log(f"必推榜 {gid} 异常：{str(e)[:80]}")
-        time.sleep(3)  # 单条间隔，防风控
+    for lst in lists:
+        for it in lst:
+            if got >= BITUI_MAX_PER_ROUND:
+                break
+            gid = str(it.get("id"))
+            if gid in seen:
+                continue  # 跨榜去重：任一榜见过的 id 直接跳过
+            try:
+                conv = dtk_bitui.convert_item(it)
+                if not conv or not conv.get("tpwd"):
+                    log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]} {gid} 转链失败（无淘口令），下轮重试")
+                    continue
+                KW_QUEUE.append(dtk_bitui.to_deal(it, conv))
+                seen.add(gid)
+                got += 1
+                log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]}新品 {gid} | {it.get('d_title', '')[:26]}")
+            except Exception as e:
+                log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]} {gid} 异常：{str(e)[:80]}")
+            time.sleep(3)  # 单条间隔，防风控
+        if got >= BITUI_MAX_PER_ROUND:
+            break
     if got:
         save_json(BITUI_SEEN_FILE, sorted(seen)[-3000:])
     return got
