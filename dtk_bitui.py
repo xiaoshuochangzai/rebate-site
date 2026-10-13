@@ -101,9 +101,26 @@ def fetch_rank(kind="bitui"):
 
 
 def convert_item(it):
-    """转链一条榜单商品。返回 dict{tpwd, short, link, item_link}；失败返回 None。"""
+    """转链一条榜单商品。返回 dict{tpwd, short, link, item_link}；失败返回 None。
+    2026-10-13 起：优先品带超红通路（parse-tb-multiple-new supered=1，口令带超级红包会场），
+    异常/没转出自动退回 get-privilege 老通路。"""
     if not it.get("goodsid"):
         return None
+    # 品带超红通路：商品链接进 → 带超级红包的口令出（红包订单分成90%）
+    try:
+        x = dtk_convert.direct_convert_super(
+            "https://item.taobao.com/item.htm?id=%s" % it["goodsid"])
+        if x and x.get("_super_tpwd"):
+            return {
+                "tpwd": x["_super_tpwd"],
+                "tpwd_new": "",
+                "short": x.get("_super_url") or "",
+                "link": "",
+                "item_link": "",
+                "_supered": True,  # 标记：这条口令带了超红
+            }
+    except Exception:
+        pass
     payload = {
         "site_id": SITE_ID,
         "pid": PID,

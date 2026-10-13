@@ -95,6 +95,52 @@ def direct_convert(text, retry=True):
     return d0
 
 
+SUPER_URL = "https://dtkapi.ffquan.cn/taobaoapi/parse-tb-multiple-new"
+
+
+def direct_convert_super(text, retry=True):
+    """品带超红转链（公告 www.dataoke.com/info/?id=705 的「品带超红」按钮同接口，
+    2026-10-13 从 chunk 40 挖出）：
+    整段文案进 → 逐口令出「带超级红包会场」的新口令（推单品同时推超红，红包订单分成90%）。
+    返回首条成功项 dict（_super_tpwd=超红口令 / _super_url=对应短链 / match=被替换的原口令）；
+    没转出超红口令返回 None（调用方退回普通 pwd-analysis 通路，不阻塞上站）。"""
+    jaw = _get_jaw()
+    headers = {
+        "User-Agent": UA,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://www.dataoke.com",
+        "Referer": "https://www.dataoke.com/xp/xb",
+        "Accept": "application/json, text/plain, */*",
+    }
+    body = urllib.parse.urlencode({
+        "content": text or "",
+        "link_type": "18",
+        "supered": "1",
+        "referer": urllib.parse.quote("https://www.dataoke.com/xp/xb", safe=""),
+    })
+    r = requests.post(SUPER_URL + "?jaw_uid=" + urllib.parse.quote(jaw),
+                      data=body, headers=headers, timeout=15)
+    j = r.json()
+    code = str(j.get("code"))
+    if code == "1000" and retry:
+        _refresh_jaw()  # 登录态过期，重捞 cookie 再试一次
+        return direct_convert_super(text, retry=False)
+    if code != "1":
+        raise RuntimeError(f"dtkapi super code={code} {str(j.get('msg'))[:60]}")
+    d = j.get("data")
+    lst = d if isinstance(d, list) else (list(d.values()) if isinstance(d, dict) and d else [])
+    for x in lst:
+        if not isinstance(x, dict) or str(x.get("code")) != "1":
+            continue
+        # 券链超红口令优先（与 pwd-analysis 的券链 tpwd 语义一致），无券退佣金链超红口令
+        tp = (x.get("coupon_supered_short_tpwd") or x.get("cps_supered_short_tpwd") or "").strip()
+        if tp:
+            x["_super_tpwd"] = tp
+            x["_super_url"] = (x.get("coupon_supered_short_url") or x.get("cps_supered_short_url") or "").strip()
+            return x
+    return None
+
+
 # ---------- 线报列表：纯 API（2026-09-06 定案） ----------
 # 页面 DOM 的自动刷新依赖 Chrome 定时器，监控断连 30s 后标签即被冻结，
 # DOM 永远停留在冻结时刻 → 淘宝「假死」。改直调 xb-list 接口（实测裸调即可用），
@@ -346,14 +392,27 @@ class Dtk:
         return tips
 
     def convert_tip(self, tip):
-        """纯 API 转链一条线报。返回 dict{text, pict, price}；失败返回 None。"""
+        """纯 API 转链一条线报。返回 dict{text, pict, price}；失败返回 None。
+        2026-10-13 起：优先品带超红通路（supered=1，口令带超级红包会场，红包订单分成90%），
+        异常/没转出自动退回普通 pwd-analysis 通路，不阻塞上站。"""
         text = tip.get("orig") or tip.get("text") or ""
         if not text.strip():
             return None
-        d0 = direct_convert(text)
-        if not d0:
-            return None
-        tpwd = (d0.get("tpwd") or "").strip()
+        d0 = None
+        try:
+            d0 = direct_convert_super(text)
+        except Exception:
+            d0 = None
+        surl = ""
+        if d0 and d0.get("_super_tpwd"):
+            tpwd = d0["_super_tpwd"]
+            surl = d0.get("_super_url") or ""
+        else:
+            d0 = direct_convert(text)
+            if not d0:
+                return None
+            tpwd = (d0.get("tpwd") or "").strip()
+            surl = d0.get("short_url") or ""
         if not tpwd:
             return None
         # 旧口令整块替换成新口令（没有口令的文案则走后面的追加）
@@ -364,7 +423,6 @@ class Dtk:
         out = re.sub(r"\n{3,}", "\n\n", out).strip()
         if tpwd not in out:
             out += "\n" + tpwd
-        surl = d0.get("short_url") or ""
         if surl and surl not in out:
             out += "\n" + surl
         if tpwd not in out:
