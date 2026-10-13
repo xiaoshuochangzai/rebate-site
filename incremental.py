@@ -16,9 +16,11 @@ import hashlib
 import json
 import atexit
 import os
+import queue
 import re
 import subprocess
 import sys
+import threading
 import time
 
 try:
@@ -38,6 +40,142 @@ except Exception:
 # 关键词推送队列：本轮新入库的线报先进这里，轮末统一交给 keyword_push.flush
 KW_QUEUE = []
 _ROUND = [0]  # 轮询轮数计数（用于周期性打印企微连接状态）
+
+# 淘宝转链后台化（Boss 2026-10-13 明令「先看看B的效果」）：
+# 主循环只做发现+入队，慢转链（淘宝 1.5~2s/条）全在守护线程里跑，
+# 成品经 TB_DONE 回主线程入库/推送——京东主循环永不被淘宝堵（实测高峰排队 4.5 分钟的根治）。
+# 共享状态纪律：deals/KW_QUEUE/seen 只允许主线程动（单写者）；后台线程只碰 _TB_INFLIGHT（加锁）。
+TB_JOBS = queue.Queue()   # ("tip", tip) / ("bitui", it) —— 待转链
+TB_DONE = queue.Queue()   # ("tip", tip, out) / ("bitui", it, conv) —— 转链成品
+_TB_LOCK = threading.Lock()
+_TB_INFLIGHT = set()      # 正在后台转链的 id（防重复入队；失败丢弃后允许下轮重试）
+
+_DTK_STATE = {"seen": None}    # 淘宝线报已见集合（主线程专用缓存，落盘 DTK_SEEN_FILE）
+_BITUI_STATE = {"seen": None}  # 三榜已见集合（主线程专用缓存，落盘 BITUI_SEEN_FILE）
+
+
+def _dtk_seen():
+    if _DTK_STATE["seen"] is None:
+        _DTK_STATE["seen"] = set(load_json(DTK_SEEN_FILE, []))
+    return _DTK_STATE["seen"]
+
+
+def _dtk_seen_save():
+    save_json(DTK_SEEN_FILE, sorted(_dtk_seen())[-3000:])
+
+
+def _bitui_seen():
+    if _BITUI_STATE["seen"] is None:
+        _BITUI_STATE["seen"] = set(load_json(BITUI_SEEN_FILE, []))
+    return _BITUI_STATE["seen"]
+
+
+def _bitui_seen_save():
+    save_json(BITUI_SEEN_FILE, sorted(_bitui_seen())[-3000:])
+
+
+def _tb_inflight_add(k):
+    with _TB_LOCK:
+        if k in _TB_INFLIGHT:
+            return False
+        _TB_INFLIGHT.add(k)
+        return True
+
+
+def _tb_inflight_discard(k):
+    with _TB_LOCK:
+        _TB_INFLIGHT.discard(k)
+
+
+def _tb_worker():
+    """淘宝转链守护线程：逐条转（条间 3s 防风控，沿用原节奏），成品扔回 TB_DONE。"""
+    import dtk_bitui
+    import dtk_convert
+    while True:
+        kind, payload = TB_JOBS.get()
+        try:
+            if kind == "tip":
+                k = dtk_convert.to_deal(payload, None)["id"]
+                out = dtk_convert.convert_tip(payload)
+                if out:
+                    TB_DONE.put(("tip", payload, out))
+                else:
+                    log(f"淘宝后台转链失败 {k}，本轮放弃（不上站，页面池内期间可重试）")
+            else:
+                k = str(payload.get("id") or "")
+                conv = dtk_bitui.convert_item(payload)
+                if conv and conv.get("tpwd"):
+                    TB_DONE.put(("bitui", payload, conv))
+                else:
+                    log(f"三榜 {k} 后台转链失败（无淘口令），下轮重试")
+        except Exception as e:
+            log(f"淘宝后台转链异常：{str(e)[:100]}")
+        finally:
+            if kind == "tip":
+                try:
+                    _tb_inflight_discard(dtk_convert.to_deal(payload, None)["id"])
+                except Exception:
+                    pass
+            else:
+                _tb_inflight_discard(str(payload.get("id") or ""))
+            TB_JOBS.task_done()
+        time.sleep(3)  # 条间间隔防风控（沿用原 poll 节奏）
+
+
+def start_tb_worker():
+    t = threading.Thread(target=_tb_worker, daemon=True, name="tb-convert")
+    t.start()
+    log("淘宝后台转链线程已启动（京东主循环不再被淘宝转链堵塞）")
+
+
+def drain_tb_done(deals, have_ids):
+    """主线程收后台转链成品：入库/进推送队列（保持主线程单写者）。返回 (tip数, bitui数)。"""
+    import dtk_bitui
+    import dtk_convert
+    n_tip = n_bit = 0
+    while True:
+        try:
+            kind, payload, out = TB_DONE.get_nowait()
+        except queue.Empty:
+            break
+        if kind == "tip":
+            k = dtk_convert.to_deal(payload, None)["id"]
+            try:
+                deal = dtk_convert.to_deal(payload, out)
+                if not str(deal["list"][0]["content"]).strip():
+                    _dtk_seen().add(k)  # 剔除京东链接后无内容 → 丢弃且不再重试
+                    log(f"淘宝线报 {k} 剔除京东链接后为空，丢弃")
+                else:
+                    deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    deals.insert(0, deal)
+                    have_ids.add(k)
+                    _dtk_seen().add(k)
+                    n_tip += 1
+                    log(f"淘宝线报已转链落盘 {k} | {deal['list'][0]['content'][:26]}")
+            except Exception as e:
+                log(f"淘宝成品入库异常 {k}：{str(e)[:80]}")
+            finally:
+                _tb_inflight_discard(k)
+                _dtk_seen_save()
+        else:
+            gid = str(payload.get("id") or "")
+            try:
+                if out and out.get("tpwd"):
+                    KW_QUEUE.append(dtk_bitui.to_deal(payload, out))
+                    _bitui_seen().add(gid)
+                    _bitui_seen_save()
+                    n_bit += 1
+                    log(f"三榜新品已转链待推 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                else:
+                    log(f"三榜 {gid} 成品无淘口令，下轮重试")
+            except Exception as e:
+                log(f"三榜成品处理异常 {gid}：{str(e)[:80]}")
+            finally:
+                _tb_inflight_discard(gid)
+    if n_tip:
+        persist(deals)
+        mark_dirty(f"tb tip x{n_tip}")
+    return n_tip, n_bit
 
 # pythonw（无窗口）拉起子进程时，Windows 默认会给他弹一个黑色控制台窗口。
 # 监控里 git 兜底推送 / powershell 杀浏览器都会被 Boss 看到「凭空弹窗」，
@@ -92,20 +230,30 @@ def save_json(path, obj):
 
 
 def git_push(tag):
+    """git 兜底推送。2026-10-13 加超时：此前 git push 直连 github（被墙）会挂到
+    TCP 超时（实测把主循环堵死 6.5 分钟），京东抓取全程停摆——网站落后几分钟的元凶之一。"""
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     cmds = [
         ["git", "add", "-A"],
         ["git", "commit", "-m", tag],
     ]
     for c in cmds:
-        subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env, creationflags=NO_WINDOW)
-    # 三路重试：直连 → 50111 → 7890
+        try:
+            subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env,
+                           creationflags=NO_WINDOW, timeout=30)
+        except subprocess.TimeoutExpired:
+            return False
+    # 三路重试：直连 → 50111 → 7890（每路最多等 45s，挂了就换下一路）
     for proxy in (None, "http://127.0.0.1:50111", "http://127.0.0.1:7890"):
         c = ["git", "push", "origin", "main"]
         if proxy:
             c = ["git", "-c", f"http.proxy={proxy}", "-c", f"https.proxy={proxy}",
                  "push", "origin", "main"]
-        r = subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env, creationflags=NO_WINDOW)
+        try:
+            r = subprocess.run(c, cwd=BASE_DIR, capture_output=True, env=env,
+                               creationflags=NO_WINDOW, timeout=45)
+        except subprocess.TimeoutExpired:
+            continue
         if r.returncode == 0:
             return True
     return False
@@ -158,25 +306,29 @@ def flush_if_due(force=False):
         log(f"KV 直写上线（防抖 {int(waited)}s，共 {len(deals)} 条）")
         DIRTY["flag"] = False
         return
-    log(f"KV 直写失败：{msg}，尝试 git 兜底")
-    if git_push(f"fallback: kv fail {DIRTY['note']}"):
-        log("git 兜底推送成功")
-        DIRTY["flag"] = False
-    else:
-        DIRTY["since"] = time.time()
-        log("KV 与 git 都失败，已重置防抖窗口，下轮重试")
+    log(f"KV 直写失败：{msg}，git 兜底转后台线程（2026-10-13：不再堵主循环）")
+    DIRTY["flag"] = False  # 本批已交给后台；之后的新变更会重新置脏触发新一轮 KV 尝试
+
+    def _bg_git():
+        try:
+            okg = git_push(f"fallback: kv fail {DIRTY['note']}")
+            log("git 兜底推送成功" if okg else "git 兜底也失败（KV 下次变更时自动重试）")
+        except Exception as e:
+            log(f"git 兜底异常：{str(e)[:80]}")
+
+    threading.Thread(target=_bg_git, daemon=True).start()
 
 
 def poll_dtk(deals, have_ids):
-    """大淘客淘宝线报：抓页面新线报 → 转链（红线：转不上不上站）→ 返回插入条数。
+    """大淘客淘宝线报：抓页面新线报 → 入队后台转链（红线：转不上不上站）→ 返回入队数。
 
     注：失败直接放弃、不重试——页面客户端会缓存「已转链」状态（isLoad），
     点过的卡再点不再调转链 API（缓存秒弹「文案复制成功」），重试必失败；
     且 Boss 明令旧的不要，页面卡池也只留最新 12 张。"""
     import dtk_convert
-    dtk_seen = set(load_json(DTK_SEEN_FILE, []))
+    dtk_seen = _dtk_seen()
     first_run = not dtk_seen
-    inserted = 0
+    enqueued = 0
     d = None
     try:
         # 首选纯 API：页面 DOM 的自动刷新会被 Chrome 冻结（断连 30s 标签即冻结，
@@ -195,53 +347,30 @@ def poll_dtk(deals, have_ids):
         if first_run:
             for t in tips:
                 dtk_seen.add(key_of(t))
-            save_json(DTK_SEEN_FILE, sorted(dtk_seen))
+            _dtk_seen_save()
             log(f"淘宝基线已建立：现存 {len(tips)} 条全部跳过，只收之后新出的")
             return 0
 
-        fresh = [t for t in tips if key_of(t) not in dtk_seen and key_of(t) not in have_ids]
+        fresh = [t for t in tips if key_of(t) not in _dtk_seen() and key_of(t) not in have_ids]
         # v4 纯 API 直调版：转链不发页面请求，无需 reload（列表自动更新，只读不写，
         # 屏幕上不会再出现大淘客页面反复刷新）
-        fresh = fresh[:3]  # 单轮上限：转链队列慢（实测 5~45s/条），防单轮过久饿着京东
+        fresh = fresh[:3]  # 单轮入队上限，防队列堆积
 
-        def handle(t):
-            """转链并入库；成功返回 True。"""
-            nonlocal inserted
-            out = dtk_convert.convert_tip(t)
-            if not out:
-                return False
-            deal = dtk_convert.to_deal(t, out)
-            if not str(deal["list"][0]["content"]).strip():
-                # 剔除京东链接行后无有效内容（整条就是京东优惠）→ 丢弃且不再重试
-                dtk_seen.add(deal["id"])
-                log(f"淘宝线报 {deal['id']} 剔除京东链接后为空，丢弃")
-                return True
-            deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
-            deals.insert(0, deal)
-            # 注：Boss 2026-09-16 明令——淘宝线报不再推企微，只推必推榜新品（见 poll_bitui）
-            have_ids.add(deal["id"])
-            dtk_seen.add(deal["id"])
-            inserted += 1
-            log(f"淘宝线报已转链落盘 {deal['id']} | {deal['list'][0]['content'][:26]}")
-            return True
-
+        # Boss 2026-10-13 明令（方案B）：淘宝转链挪后台线程，主循环只发现+入队，
+        # 京东不再被淘宝转链（1.5~2s/条）堵塞；成品由 drain_tb_done 回主线程入库
         for t in fresh:
             k = key_of(t)
-            if k in dtk_seen:
-                continue
-            log(f"新淘宝线报 {k} | {t['title'][:30]}")
-            if not handle(t):
-                log("  淘宝转链失败，放弃（不上站，旧线报不重试）")
-            save_json(DTK_SEEN_FILE, sorted(dtk_seen))
-            time.sleep(3)  # 单条间隔，防风控
-
-        save_json(DTK_SEEN_FILE, sorted(dtk_seen))
+            if not _tb_inflight_add(k):
+                continue  # 已在后台转链中，防重复入队
+            log(f"新淘宝线报 {k} | {t['title'][:30]}（已排入后台转链）")
+            TB_JOBS.put(("tip", t))
+            enqueued += 1
     except Exception as e:
         log(f"淘宝线报本轮异常：{str(e)[:120]}")
     finally:
         if d:
             d.close()
-    return inserted
+    return enqueued
 
 
 def poll_bitui():
@@ -254,7 +383,7 @@ def poll_bitui():
     首次运行建基线：三榜现存全部记 seen 跳过，防一次性轰炸。
     """
     import dtk_bitui
-    seen = set(load_json(BITUI_SEEN_FILE, []))
+    seen = _bitui_seen()
     # 依次拉三榜（顺序：必推榜 → 热销榜 → 热推榜），拉取失败跳过该榜本轮不推
     lists = []
     for kind in dtk_bitui.RANK_ORDER:
@@ -272,9 +401,11 @@ def poll_bitui():
         for lst in lists:
             seen.update(str(it.get("id")) for it in lst if it.get("id"))
         seen.add(MULTI_MARK)
-        save_json(BITUI_SEEN_FILE, sorted(seen)[-3000:])
+        _bitui_seen_save()
         log(f"三榜基线已建立：现存 {len(seen) - 1} 条全部跳过，只推之后新进榜的")
         return 0
+    # Boss 2026-10-13 明令（方案B）：三榜转链也挪后台线程，这里只发现+入队；
+    # seen 在 drain_tb_done 转链成功后才标（失败的留在池内下轮重试，同原逻辑）
     got = 0
     for lst in lists:
         for it in lst:
@@ -283,22 +414,13 @@ def poll_bitui():
             gid = str(it.get("id"))
             if gid in seen:
                 continue  # 跨榜去重：任一榜见过的 id 直接跳过
-            try:
-                conv = dtk_bitui.convert_item(it)
-                if not conv or not conv.get("tpwd"):
-                    log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]} {gid} 转链失败（无淘口令），下轮重试")
-                    continue
-                KW_QUEUE.append(dtk_bitui.to_deal(it, conv))
-                seen.add(gid)
-                got += 1
-                log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]}新品 {gid} | {it.get('d_title', '')[:26]}")
-            except Exception as e:
-                log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]} {gid} 异常：{str(e)[:80]}")
-            time.sleep(3)  # 单条间隔，防风控
+            if not _tb_inflight_add(gid):
+                continue  # 已在后台转链中，防重复入队
+            TB_JOBS.put(("bitui", it))
+            got += 1
+            log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]}新品 {gid} | {it.get('d_title', '')[:26]}（已排入后台转链）")
         if got >= BITUI_MAX_PER_ROUND:
             break
-    if got:
-        save_json(BITUI_SEEN_FILE, sorted(seen)[-3000:])
     return got
 
 
@@ -384,9 +506,9 @@ def backfill_recent(cfg, deals, have_ids, seen, log=print):
     lo = max(time.mktime(time.strptime(time.strftime("%Y-%m-%d 00:00:00"), "%Y-%m-%d %H:%M:%S")),
              time.time() - 2 * 3600)
     lo_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(lo))
-    log(f"启动补采：扫描 {lo_s} 之后的漏网线报（翻页上限 20 页）")
+    log(f"启动补采：扫描 {lo_s} 之后的漏网线报（翻页上限 10 页）")
     got = 0
-    for p in range(1, 21):
+    for p in range(1, 11):
         try:
             items = build_site.fetch_page(cfg, p)["data"].get("items") or []
         except Exception as e:
@@ -484,6 +606,7 @@ def main():
         print("推送通道=%s" % keyword_push._STATE.get("channel", "?"))
     except Exception as e:
         print("推送模块启动失败：%s" % str(e)[:100])
+    start_tb_worker()  # 淘宝转链后台线程（方案B：京东主循环不再被淘宝堵塞）
     args = sys.argv[1:]
     once = "--once" in args
     do_init = "--init" in args
@@ -575,6 +698,14 @@ def main():
                 poll_bitui()
             except Exception as e:
                 log(f"必推榜轮询异常：{str(e)[:100]}")
+
+            # 收淘宝后台转链成品（入库/进推送队列；主线程单写者纪律）
+            try:
+                n_tip, n_bit = drain_tb_done(deals, have_ids)
+                if n_bit:
+                    mark_dirty(f"bitui x{n_bit}")
+            except Exception as e:
+                log(f"淘宝成品回收异常：{str(e)[:100]}")
 
             # 关键词订阅推送（企微智能机器人长连接；配置热生效）
             try:
