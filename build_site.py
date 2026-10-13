@@ -31,11 +31,11 @@ PLATFORM_MAP = {"1": "淘宝", "2": "京东", "3": "飞猪"}
 ONLY_PLATFORMS = {"1", "2"}
 
 
-def fetch_page(cfg, page_no):
+def fetch_page(cfg, page_no, timeout=12):
     url = (f"{cfg['crawl']['source']}?page_no={page_no}"
            f"&page_size={cfg['crawl']['page_size']}&is_images=1")
     req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -533,6 +533,7 @@ function buildTabs(){
 }
 buildTabs();
 render(true);
+updateTs(); // 首屏立即用内嵌数据校准「截止」，不等接口返回
 
 // 刷新 = 从 KV 接口拉最新数据、重绘当前平台（不整页 reload，不重置分类）
 function refreshData(){
@@ -546,9 +547,15 @@ function refreshData(){
       DEALS = fresh;
       buildTabs();
       render(true);
+      updateTs();
       return changed;
     })
     .catch(()=>false);
+}
+function updateTs(){ // 顶部「截止」= 当前数据最新一条的线报时间（真实数据截止点，不是页面打开时刻）
+  const ts = document.querySelector('.rt-num');
+  const t = DEALS.length ? String(DEALS[0].time||'') : '';
+  if(ts) ts.textContent = t.length >= 16 ? t.slice(11,16) : new Date().toTimeString().slice(0,5);
 }
 // 防御：元素缺失也不许炸掉后续脚本（上次就是这里 null 报错把首屏刷新带死的）
 const btnRefreshEl = document.getElementById('btnRefresh');
@@ -561,11 +568,8 @@ if(btnRefreshEl){
     });
   };
 }
-// 首屏渲染后自动拉一次最新数据
-refreshData().then(()=>{ // 数据落定后同步顶部「截止」时间，别让它停留在构建时刻
-  const ts = document.querySelector('.rt-num');
-  if(ts) ts.textContent = new Date().toTimeString().slice(0,5);
-});
+// 首屏渲染后自动拉一次最新数据（截止时间由 updateTs 在 refreshData 内同步）
+refreshData();
 </script>
 </body>
 </html>
