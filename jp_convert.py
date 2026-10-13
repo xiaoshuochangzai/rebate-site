@@ -22,7 +22,7 @@ except Exception:
     jp_api = None  # 引擎缺席时自动全走老 UI 路径
 
 JP_URL = "https://www.jingpinku.com/tools/chain_link.do"
-_DELAY = float(os.environ.get("JP_CONV_DELAY", "4"))
+_DELAY = float(os.environ.get("JP_CONV_DELAY", "1"))
 
 URL_RE = re.compile(r'https?://[^\s，,。；、）】\u3011]+')
 

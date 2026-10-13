@@ -21,12 +21,18 @@
 import json
 import os
 import time
+import re
 import urllib.request
 
 try:
     import wecom_push
 except Exception:
     wecom_push = None
+
+try:
+    import wecom_ext
+except Exception:
+    wecom_ext = None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "keyword_config.json")
@@ -39,6 +45,57 @@ TB_QUOTA = 3             # 每轮淘宝最多推几条（30%）
 TB_SEP = "——"            # 淘宝多条合并时每条线报之间的分隔行（Boss 2026-09-11 明令，方便看清哪到哪是一条）
 JD_TAG = "【京东】"       # 京东线报消息开头平台标识（Boss 2026-09-16 明令）
 FOOTER_EVERY = 5         # 每发满 5 条消息才带一次底部站链尾，其余不带（Boss 2026-09-16 明令）
+REDPACK_EVERY = 1        # 京东每 2 条带一次红包推广（Boss 2026-10-13 明令）
+REDPACK_URL = "https://u.jd.com/FrBoSd3"
+# 钩子按线报内容匹配（Boss 2026-10-13 明令：与线报文案相配，嵌入无违和）：
+# 提取线报特征（凑单/首单/plus/赠/券/价格）→ 选对应钩子组，组内按天轮换；无特征走默认池
+REDPACK_HOOKS = {
+    "coupon": ["凑单前先领，凑得更划算", "领完这张再去凑单", "叠上这张，凑单更省", "这张不领，凑单白凑"],
+    "first": ["首单叠上这个，更划算", "首单价之上还能再省"],
+    "plus": ["plus 会员再叠一层", "plus 下单前先领这个"],
+    "gift": ["赠品之外，还能再省一笔"],
+    "juan": ["这张不领，等于多花钱", "再领一张，减得更多"],
+    "price": ["到手价还能再低一点", "叠上它，比页面价还低", "券后还能再省一笔"],
+    "default": ["还能再叠一层优惠", "一单一领，天天都能省", "多领一张，多省一笔"],
+}
+
+
+def _pick_hook(text):
+    """按线报内容选钩子：特征优先级 凑单>首单>plus>赠>券>价格>默认；组内按天轮换。"""
+    import datetime
+    r = datetime.date.today().toordinal()
+
+    def pick(lst):
+        return lst[r % len(lst)]
+
+    if "凑单" in text:
+        return pick(REDPACK_HOOKS["coupon"])
+    if "首单" in text:
+        return pick(REDPACK_HOOKS["first"])
+    if "plus" in text.lower():
+        return pick(REDPACK_HOOKS["plus"])
+    if "赠" in text or "返" in text:
+        return pick(REDPACK_HOOKS["gift"])
+    if "券" in text or "奍" in text or "卷" in text or "榮" in text:
+        return pick(REDPACK_HOOKS["juan"])
+    if re.search(r"\d+(\.\d+)?元|【\d+(\.\d+)?】", text):
+        return pick(REDPACK_HOOKS["price"])
+    return pick(REDPACK_HOOKS["default"])
+
+
+def _apply_redpack(text):
+    """嵌入红包钩子：插在第一条链接行之后（混进券堆，与线报融为一体）。"""
+    hook = _pick_hook(text)
+    out, inserted = [], False
+    for ln in text.split("\n"):
+        out.append(ln)
+        if not inserted and ("http://" in ln or "https://" in ln):
+            out.append(hook)
+            out.append(REDPACK_URL)
+            inserted = True
+    if not inserted:
+        out += [hook, REDPACK_URL]
+    return "\n".join(out)
 JD_SEND_GAP = 0.6        # 京东逐条发送时的间隔（秒），防企微限频（Boss 2026-09-16：京东一条一条发）
 MIN_PUSH_INTERVAL = 600  # 两次推送最小间隔（秒），默认10分钟；攒够 MAX_PER_ROUND 条可提前发
 WEBHOOK_MAX = 1800       # 企微 text 消息单条上限 2048 字节，这里留余量
@@ -56,6 +113,9 @@ def _load_config():
         _STATE["chatids"] = [str(c).strip() for c in (cfg.get("chatids") or []) if str(c).strip()]
         _STATE["webhook"] = (cfg.get("webhook") or "").strip()
         _STATE["channel"] = (cfg.get("channel") or ("webhook" if _STATE["webhook"] else "longconn")).strip()
+        _wext = cfg.get("wecom_ext") or {}
+        if wecom_ext is not None:
+            wecom_ext.configure(_wext)
         try:
             _STATE["min_interval"] = int(cfg.get("min_interval") or MIN_PUSH_INTERVAL)
         except Exception:
@@ -77,6 +137,8 @@ def start():
     _load_config()
     if _STATE.get("channel") == "longconn" and wecom_push is not None:
         wecom_push.start()
+    if wecom_ext is not None:
+        wecom_ext.start()
 
 
 def _copy_text(deal):
@@ -207,6 +269,8 @@ def _send_webhook(text):
                 d = json.loads(r.read().decode("utf-8"))
             if d.get("errcode") == 0:
                 results.append("ok")
+                if wecom_ext is not None:
+                    wecom_ext.enqueue(c)   # 同步入外部群队列（低频派发，wecom_ext 自控）
             else:
                 ok_all = False
                 results.append(f"errcode={d.get('errcode')} {str(d.get('errmsg'))[:60]}")
@@ -289,9 +353,12 @@ def flush(deals, log=print):
             sent_ids.append(str(d.get("id")))  # 空文案没得发，直接标已推，防死循环
             continue
         sent_cnt = _bump_sent()  # 每 5 条才带一次站链尾（Boss 2026-09-16 明令）
+        # 京东每 2 条套一次红包钩子（按天轮换 5 套，Boss 2026-10-13 明令）；站链尾垫底
+        if sent_cnt % REDPACK_EVERY == 0:
+            t = _apply_redpack(t)
         tail = "\n" + FOOTER if sent_cnt % FOOTER_EVERY == 0 else ""
         ok, msg = _send(JD_TAG + t + tail, log)
-        msgs.append(f"京东1条({'带站链尾' if tail else '无尾'})({msg})")
+        msgs.append(f"京东1条({'红包' if sent_cnt % REDPACK_EVERY == 0 else ''}{'带站链尾' if sent_cnt % FOOTER_EVERY == 0 else '无尾'})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))
             ok_any = True
@@ -299,8 +366,8 @@ def flush(deals, log=print):
     # Boss 2026-10-07 明令：淘宝（必推榜）也改成一条一条单独发，不再多条合并
     for d in tb:
         t = _fmt_one(d).strip()
-        if not d.get("_bitui"):  # 只有老线报文案才需要滤掉 s.click 行
-            t = "\n".join(ln for ln in t.split("\n") if "s.click.taobao.com" not in ln).strip()
+        # Boss 2026-10-12 明令：s.click 一律滤掉（含必推榜积压的旧文案），只留淘口令
+        t = "\n".join(ln for ln in t.split("\n") if "s.click.taobao.com" not in ln).strip()
         if not t:
             sent_ids.append(str(d.get("id")))  # 空文案没得发，直接标已推，防死循环
             continue

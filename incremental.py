@@ -319,6 +319,80 @@ def fetch_latest(cfg, pages=2):
     return out
 
 
+def _ingest_one(d, cfg, deals, have_ids, seen, log=print):
+    """新线报入库（主循环与启动补采共用）：转链→悦拜短链→落盘→进推送队列；失败进待转队列。"""
+    wid = str(d["id"])
+    seen.add(wid)
+    save_json(SEEN_FILE, sorted(seen))
+    title = next((x.get("content") for x in d.get("list", []) if x.get("content")), "")
+    log(f"新线报 {wid} | {title[:30]}")
+    try:
+        out, st = jd_convert.convert_all_browser([d], cfg)
+        for k, v in st.items():
+            STATE[k] = STATE.get(k, 0) + v
+        conv = out[0] if out else d
+        if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
+            conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要（精品库引擎不回价格，从文案取）
+            conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
+            try:
+                yuebai_short.protect_deal(conv, log=log)  # 站上展示套悦拜短链（_siteContext），防机器人扒 u.jd.com 裸返利链
+            except Exception as _ye:
+                log(f"  短链保护跳过：{str(_ye)[:60]}")
+            deals.insert(0, conv)
+            KW_QUEUE.append(conv)  # 关键词推送队列
+            have_ids.add(wid)
+            persist(deals)
+            mark_dirty(f"new wire {wid}")
+            log(f"  已转链并落盘 {wid}（待合并推送）")
+        else:
+            pending = load_json(PENDING_FILE, [])
+            if not any(str(p.get("id")) == wid for p in pending):
+                pending.append(d)
+                save_json(PENDING_FILE, pending)
+            log(f"  转链失败，进待转队列（{len(pending)} 条），不上站")
+    except Exception as e:
+        pending = load_json(PENDING_FILE, [])
+        if not any(str(p.get("id")) == wid for p in pending):
+            pending.append(d)
+            save_json(PENDING_FILE, pending)
+        log(f"  转链异常，进待转队列：{str(e)[:80]}")
+
+
+def backfill_recent(cfg, deals, have_ids, seen, log=print):
+    """Boss 2026-10-13 明令：启动时补采当天启动前 2 小时内的漏网线报。
+    如 7:10 启动 → 把 5:10 之后（且在当天 0 点之后）没入库的京东线报补全（翻页上限 20 页）。"""
+    lo = max(time.mktime(time.strptime(time.strftime("%Y-%m-%d 00:00:00"), "%Y-%m-%d %H:%M:%S")),
+             time.time() - 2 * 3600)
+    lo_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(lo))
+    log(f"启动补采：扫描 {lo_s} 之后的漏网线报（翻页上限 20 页）")
+    got = 0
+    for p in range(1, 21):
+        try:
+            items = build_site.fetch_page(cfg, p)["data"].get("items") or []
+        except Exception as e:
+            log(f"  补采第{p}页抓取失败: {e}")
+            break
+        if not items:
+            break
+        oldest = None
+        for it in items:
+            t = str(it.get("starttime") or "")
+            if oldest is None or t < oldest:
+                oldest = t
+            wid = str(it.get("wire_id") or "")
+            if not wid or not t or t < lo_s or wid in seen:
+                continue
+            d = build_site.normalize(it)
+            if str(d.get("platform")) == "2" and has_link(d):
+                _ingest_one(d, cfg, deals, have_ids, seen, log)
+                got += 1
+        time.sleep(0.4)
+        if oldest and oldest < lo_s:
+            break   # 本页已越过时间窗，不用再翻
+    log(f"启动补采完成：补入 {got} 条漏网线报")
+    return got
+
+
 def acquire_single_instance():
     """单实例锁：已有监控在跑时本实例直接退出（防双开互踩覆盖 deals.json）。
     判定必须核对 cmdline 里真的有 incremental.py——Windows 会快速复用 PID，
@@ -413,6 +487,15 @@ def main():
         if do_init:
             return
 
+    # Boss 2026-10-13 明令：启动时补采当天启动前 2 小时的漏网线报（如 7:10 启动 → 补 5、6 点的）
+    deals0 = [d for d in load_json(os.path.join(SITE_DIR, "deals.json"), []) if has_link(d)]
+    have_ids0 = {str(d.get("id")) for d in deals0}
+    if not once:
+        try:
+            backfill_recent(cfg, deals0, have_ids0, seen, log)
+        except Exception as e:
+            log(f"启动补采异常：{str(e)[:100]}")
+
     log(f"开始轮询：间隔 {interval}s，只处理新线报（每轮从磁盘重新载入，保留已转链结果）")
     while True:
         try:
@@ -424,43 +507,7 @@ def main():
             if fresh:
                 log(f"发现 {len(fresh)} 条新线报")
             for d in fresh:
-                wid = str(d["id"])
-                seen.add(wid)
-                save_json(SEEN_FILE, sorted(seen))
-                title = next((x.get("content") for x in d.get("list", []) if x.get("content")), "")
-                log(f"新线报 {wid} | {title[:30]}")
-
-                # Boss 红线：没转上链的绝不上站。先转链，成功才入库部署
-                try:
-                    out, st = jd_convert.convert_all_browser([d], cfg)
-                    for k, v in st.items():
-                        STATE[k] = STATE.get(k, 0) + v
-                    conv = out[0] if out else d
-                    if conv.get("_originalContext") or conv.get("_formatContext") or any(it.get("converted") for it in conv.get("list", [])):
-                        conv["price"] = jd_price_of(conv)  # 历史价格跟踪需要（精品库引擎不回价格，从文案取）
-                        conv["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 入站时间，前端用它算「X分钟前」
-                        try:
-                            yuebai_short.protect_deal(conv, log=log)  # 站上展示套悦拜短链（_siteContext），防机器人扒 u.jd.com 裸返利链
-                        except Exception as _ye:
-                            log(f"  短链保护跳过：{str(_ye)[:60]}")
-                        deals.insert(0, conv)
-                        KW_QUEUE.append(conv)  # 关键词推送队列
-                        have_ids.add(wid)
-                        persist(deals)
-                        mark_dirty(f"new wire {wid}")
-                        log(f"  已转链并落盘 {wid}（待合并推送）")
-                    else:
-                        pending = load_json(PENDING_FILE, [])
-                        if not any(str(p.get("id")) == wid for p in pending):
-                            pending.append(d)
-                            save_json(PENDING_FILE, pending)
-                        log(f"  转链失败，进待转队列（{len(pending)} 条），不上站")
-                except Exception as e:
-                    pending = load_json(PENDING_FILE, [])
-                    if not any(str(p.get("id")) == wid for p in pending):
-                        pending.append(d)
-                        save_json(PENDING_FILE, pending)
-                    log(f"  转链异常，进待转队列：{str(e)[:80]}")
+                _ingest_one(d, cfg, deals, have_ids, seen, log)
 
             # 自动补转：每轮从待转队列取 1 条重试，转上链才入库部署
             pending = load_json(PENDING_FILE, [])

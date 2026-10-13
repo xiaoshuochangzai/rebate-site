@@ -24,6 +24,7 @@ API = "https://app.yuebuy.cn/api/domain/getShortUrl"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 PATTERN = re.compile(r"https?://u\.jd\.com/[A-Za-z0-9]+")
+PATTERN_COUPON = re.compile(r"https?://coupon\.m\.jd\.com/\S+")  # 券链接（Boss 2026-10-13：必转 yue.fit）
 CALL_GAP = 0.3      # 同一轮新链之间的调用间隔（秒）
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 绕本机代理
 
@@ -77,7 +78,10 @@ def get_short(url, log=print):
 
 def protect(text, log=print):
     """把文本里的 u.jd.com 链接替换成悦拜短链。
-    返回 (新文本, 成功替换数)；全部失败则原文返回（替换数 0）。"""
+    Boss 2026-10-13 新规：
+    - 单链接线报：不再换 yue.fit，u.jd.com 原链直出（返回替换数 0）
+    - 2 条及以上：只抽中间一条（1-based 第 (n+1)//2 条）换悦拜短链，其余保持原链
+    返回 (新文本, 成功替换数)。"""
     if not text:
         return text, 0
     links = []
@@ -88,13 +92,19 @@ def protect(text, log=print):
             links.append(u)
     if not links:
         return text, 0
+    # Boss 2026-10-13 明令：coupon.m.jd.com 券链接必须全部转 yue.fit（PID 不裸奔）
+    c_links = list(dict.fromkeys(PATTERN_COUPON.findall(text)))
+    to_conv = list(c_links)
+    # u.jd.com 购买链：整条线报只有 1 条 → 原链直出；2 条及以上 → 抽中间一条转
+    if len(links) >= 2:
+        to_conv.append(links[(len(links) + 1) // 2 - 1])
     out, n = text, 0
-    for i, u in enumerate(links):
+    for i, u in enumerate(to_conv):
         s = get_short(u, log)
         if s and s != u:
             out = out.replace(u, s)
             n += 1
-        if i < len(links) - 1:
+        if i < len(to_conv) - 1:
             time.sleep(CALL_GAP)
     return out, n
 

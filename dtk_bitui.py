@@ -133,8 +133,7 @@ def build_text(it, conv):
     if seg:
         lines.append(seg)
     lines.append(conv.get("tpwd") or "")
-    if conv.get("short"):
-        lines.append(conv["short"])
+    # Boss 2026-10-12 明令：取消 s.click 短链（PID 明文易被扒），只留淘口令
     return "\n".join([x for x in lines if str(x).strip()]).strip()
 
 

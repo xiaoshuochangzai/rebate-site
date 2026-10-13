@@ -12,6 +12,7 @@ UI 参考京品库线报页（卡片网格 + 实时更新条 + 底部属性/时�
 """
 import json
 import os
+import re
 import time
 import urllib.request
 
@@ -38,13 +39,25 @@ def fetch_page(cfg, page_no):
         return json.loads(r.read().decode("utf-8"))
 
 
+_LINK_NOISE = re.compile(r'(linkKey=[A-Za-z0-9_-]*)[^\x00-\x7F]+[^&\s]*')
+
+
+def _clean_link_noise(s):
+    """Boss 2026-10-13：清洗券链接里混入的非 ASCII 垃圾。
+    如好单库原文 linkKey 中间被塞「好价-FM5x...」水印串导致链接失效——
+    从 linkKey 合法值（字母数字_-）后出现的第一个非 ASCII 字符处截断，保留 & 后参数。"""
+    if not s:
+        return s
+    return _LINK_NOISE.sub(r'\1', s)
+
+
 def normalize(item):
     lines = []
     for it in item.get("list", []) or []:
         lines.append({
-            "content": it.get("content") or "",
+            "content": _clean_link_noise(it.get("content") or ""),
             "item_id": it.get("item_id") or "",
-            "coupon_url": it.get("coupon_url") or "",
+            "coupon_url": _clean_link_noise(it.get("coupon_url") or ""),
         })
     return {
         "id": item.get("wire_id", ""),
