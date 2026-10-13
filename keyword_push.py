@@ -304,9 +304,13 @@ def _send(text, log=print):
 
 
 def _age_sec(d):
-    """条目入站至今的秒数（按 _addedAt 优先，退回 time）；解析失败返回 None（当陈旧处理）。"""
+    """条目入站至今的秒数。
+    京东用 time（haodanku 发布时间）——重启/停摆积压的旧线报入站时间是当下，
+    用 _addedAt 会把 3 小时前的旧货当新鲜货倾泻进群（2026-10-13 停摆 3.4h 实锤）；
+    淘宝/必推榜 add_time 是入榜时间（可能几天前），语义不可靠，用 _addedAt 优先。"""
     import datetime as _dt
-    for k in ("_addedAt", "time"):
+    keys = ("time",) if str(d.get("platform")) == "2" else ("_addedAt", "time")
+    for k in keys:
         s = str(d.get(k) or "").strip()
         try:
             return time.time() - _dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S").timestamp()
