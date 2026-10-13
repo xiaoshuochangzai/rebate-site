@@ -27,3 +27,10 @@ monitor_log.txt
 monitor_err.txt
 monitor.lock
 yuebai_cache.json
+
+# credentials (never commit)
+jp_login.json
+jp_cookie.json
+jp_login_lost.txt
+keyword_state.json
+keyword_pending.json

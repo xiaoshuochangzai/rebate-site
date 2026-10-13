@@ -110,6 +110,17 @@ def get_cookie(force=False):
         if c and time.time() - ts < COOKIE_TTL:
             _cookie["v"], _cookie["ts"] = c, ts
             return c
+    # Boss 2026-10-13 明令：优先账密自动登录（掉登录自动重登，无需浏览器/人工）；
+    # 凭证缺失/登录接口异常时才退回 CDP 从浏览器捞（老路径兜底）
+    try:
+        import jp_login
+        hdr = jp_login.login(force=force)
+        _cookie["v"], _cookie["ts"] = hdr, time.time()
+        return hdr
+    except FileNotFoundError:
+        pass  # 没配凭证文件，走老路
+    except Exception:
+        pass  # 登录接口异常也走老路（上层还有重试）
     return _fish_cookie()
 
 
