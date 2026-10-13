@@ -96,8 +96,9 @@ def _apply_redpack(text):
     if not inserted:
         out += [hook, REDPACK_URL]
     return "\n".join(out)
-JD_SEND_GAP = 0.6        # 京东逐条发送时的间隔（秒），防企微限频（Boss 2026-09-16：京东一条一条发）
+JD_SEND_GAP = 2.0        # 逐条发送间隔（秒）。0.6 太密：停摆恢复后 7 条连发 4 秒内打完=「一发就一串」（Boss 2026-10-13 明令修）；2s 间隔把突发摊平
 MIN_PUSH_INTERVAL = 600  # 两次推送最小间隔（秒），默认10分钟；攒够 MAX_PER_ROUND 条可提前发
+STALE_AFTER = 1800       # 积压超 30 分钟的待推线报直接丢弃不发（对齐 wecom_ext DROP_AFTER；主循环停摆恢复后防旧货倾泻成串，Boss 2026-10-13 明令「不发就不发，一发就一串是毛病」）
 WEBHOOK_MAX = 1800       # 企微 text 消息单条上限 2048 字节，这里留余量
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 绕开本机代理
 
@@ -302,6 +303,32 @@ def _send(text, log=print):
     return ok_any, "; ".join(results)
 
 
+def _age_sec(d):
+    """条目入站至今的秒数（按 _addedAt 优先，退回 time）；解析失败返回 None（当陈旧处理）。"""
+    import datetime as _dt
+    for k in ("_addedAt", "time"):
+        s = str(d.get(k) or "").strip()
+        try:
+            return time.time() - _dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S").timestamp()
+        except Exception:
+            continue
+    return None
+
+
+def _drop_stale(items, log=print):
+    """过滤掉超 STALE_AFTER 的陈旧积压（直接丢弃，不再推送）。"""
+    keep, dropped = [], 0
+    for d in items:
+        age = _age_sec(d)
+        if age is None or age > STALE_AFTER:
+            dropped += 1
+            continue
+        keep.append(d)
+    if dropped:
+        log(f"丢弃陈旧积压 {dropped} 条（超{STALE_AFTER // 60}分钟不入群，防一发一串；网站照常可查）")
+    return keep
+
+
 def flush(deals, log=print):
     """推送本轮新线报（京东全推；淘宝需命中关键词）。deals=本轮新入库线报列表（时间倒序）。
     节流：先进 pending，攒够 MAX_PER_ROUND 条 或 距上次推送超过 min_interval 秒才发；
@@ -313,9 +340,9 @@ def flush(deals, log=print):
         return 0
     pushed_ids = _load_pushed()
     pushed_set = set(pushed_ids)
-    pending = _load_pending()
+    pending = _drop_stale(_load_pending(), log=log)  # 老积压先丢弃，防停摆恢复后旧货倾泻成串
     pending_ids = {str(p.get("id")) for p in pending}
-    for d in deals:
+    for d in _drop_stale(deals, log=log):
         did = str(d.get("id"))
         if did in pushed_set or did in pending_ids:
             continue
