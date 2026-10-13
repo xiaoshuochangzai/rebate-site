@@ -88,17 +88,21 @@ def _tb_inflight_discard(k):
 
 
 def _tb_worker():
-    """淘宝转链守护线程：逐条转（条间 3s 防风控，沿用原节奏），成品扔回 TB_DONE。"""
+    """淘宝转链守护线程：逐条转（条间 3s 防风控，沿用原节奏），成品扔回 TB_DONE。
+    注意：成功路径不释放 inflight（由 drain 标完 seen 后释放）——否则主循环下一轮
+    会因 seen 未标而重复入队，造成同一条转 2~3 遍重复上站（2026-10-13 实锤踩坑）。"""
     import dtk_bitui
     import dtk_convert
     while True:
         kind, payload = TB_JOBS.get()
+        ok_flag = False
         try:
             if kind == "tip":
                 k = dtk_convert.to_deal(payload, None)["id"]
                 out = dtk_convert.convert_tip(payload)
                 if out:
                     TB_DONE.put(("tip", payload, out))
+                    ok_flag = True
                 else:
                     log(f"淘宝后台转链失败 {k}，本轮放弃（不上站，页面池内期间可重试）")
             else:
@@ -106,18 +110,20 @@ def _tb_worker():
                 conv = dtk_bitui.convert_item(payload)
                 if conv and conv.get("tpwd"):
                     TB_DONE.put(("bitui", payload, conv))
+                    ok_flag = True
                 else:
                     log(f"三榜 {k} 后台转链失败（无淘口令），下轮重试")
         except Exception as e:
             log(f"淘宝后台转链异常：{str(e)[:100]}")
         finally:
-            if kind == "tip":
-                try:
-                    _tb_inflight_discard(dtk_convert.to_deal(payload, None)["id"])
-                except Exception:
-                    pass
-            else:
-                _tb_inflight_discard(str(payload.get("id") or ""))
+            if not ok_flag:  # 失败才释放（允许下轮重试）；成功交给 drain 释放
+                if kind == "tip":
+                    try:
+                        _tb_inflight_discard(dtk_convert.to_deal(payload, None)["id"])
+                    except Exception:
+                        pass
+                else:
+                    _tb_inflight_discard(str(payload.get("id") or ""))
             TB_JOBS.task_done()
         time.sleep(3)  # 条间间隔防风控（沿用原 poll 节奏）
 
@@ -161,7 +167,12 @@ def drain_tb_done(deals, have_ids):
             gid = str(payload.get("id") or "")
             try:
                 if out and out.get("tpwd"):
-                    KW_QUEUE.append(dtk_bitui.to_deal(payload, out))
+                    deal = dtk_bitui.to_deal(payload, out)
+                    # 三榜条目的 time 字段是商品入榜时间（可能是几天前），不是入站时间；
+                    # 必须补打 _addedAt，否则 keyword_push 的 30 分钟陈旧过滤会把它们
+                    # 全部误杀成「积压」（2026-10-13 实锤：26 条只漏推 1 条的根因）
+                    deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    KW_QUEUE.append(deal)
                     _bitui_seen().add(gid)
                     _bitui_seen_save()
                     n_bit += 1
