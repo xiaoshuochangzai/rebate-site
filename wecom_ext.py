@@ -25,7 +25,7 @@ wecom_ext.py — 企微外部群通道 v3.1：多独立窗口矩阵分发 + 拟�
   "wecom_ext": {
       "enabled": true,
       "groups": ["京东+微保线报 1群", "京东羊毛线报fat①群", "京东+微保线报 2群"],
-      "win_gap": 1,        # 同条线报相邻窗口间隔（实际 +0~2s 随机）
+      "win_gap": 0,        # 同条线报相邻窗口间隔（0=连发，3 群 2 秒内）
       "msg_gap": 5,        # 两条线报之间最小间隔（实际 +0~30s 随机）
       "max_per_day": 0     # 每日线报条数上限（0=不限）
   }
@@ -84,9 +84,9 @@ def configure(cfg):
     g = c.get("groups") or ([c["group"]] if c.get("group") else [])
     _STATE["groups"] = [str(x).strip() for x in g if str(x).strip()]
     try:
-        _STATE["win_gap"] = max(1, int(c.get("win_gap") or 1))
+        _STATE["win_gap"] = max(0, int(c.get("win_gap") or 0))  # 0=窗口间零间隔（Boss 2026-10-13：3 群 2 秒内发完）
     except Exception:
-        _STATE["win_gap"] = 5
+        _STATE["win_gap"] = 0
     try:
         _STATE["msg_gap"] = max(3, int(c.get("msg_gap") or 5))
     except Exception:
@@ -174,13 +174,12 @@ def _find_hwnd(title):
 
 
 def _j(a, b):
-    """随机延迟，替代固定 sleep（拟人化：机器节奏是打分特征之一）"""
+    """小随机延迟（保一点非机械感，量级毫秒级不拖速度）"""
     return random.uniform(a, b)
 
 
 def _human_move(tx, ty):
-    """鼠标拟人化移动：从当前位置沿带弧度的缓动路径多步滑到目标，不瞬移。
-    （瞬移 = 打分特征之一；真人移动鼠标有轨迹有加减速）"""
+    """鼠标拟人化移动（v3.2 起默认不用：焦点常驻后无需每次点击；保留备用）"""
     import ctypes.wintypes as wt
     user32 = ctypes.windll.user32
     pt = wt.POINT()
@@ -193,19 +192,22 @@ def _human_move(tx, ty):
     bend = random.uniform(0.10, 0.25) * (1 if random.random() < 0.5 else -1)
     for i in range(1, steps + 1):
         t = i / steps
-        e = t * t * (3 - 2 * t)  # smoothstep 缓动（慢-快-慢）
+        e = t * t * (3 - 2 * t)
         nx = sx + dx * e - dy * bend * t * (1 - t)
         ny = sy + dy * e + dx * bend * t * (1 - t)
         user32.SetCursorPos(int(nx), int(ny))
         time.sleep(random.uniform(0.004, 0.012))
 
 
+# 独立窗口的输入框焦点是常驻的：每个窗口本会话点过一次输入框后，后续发送
+# 直接「激活→粘贴→回车」，不再点鼠标（更快，且注入事件少一半）
+_CLICKED = set()
+
+
 def send_now(title, text):
-    """拟人化发送（v3.1，2026-10-13）：
-    ① 鼠标沿弧线滑入、落点在输入框区域随机（不瞬移、不固定坐标）
-    ② 按下-抬起有真人间隔；每步随机延迟，无固定节奏
-    ③ 粘贴后停顿「检查一眼」再回车
-    无法消除项：SendInput 注入标记 + 后台进程抢焦点（系统层烙印）。"""
+    """极速发送（v3.2，2026-10-13 Boss 明令：3 个群 2 秒内发完）。
+    单窗目标 ≤0.6s：激活 60-120ms →（首窗才点输入框）→ Ctrl+A/Del → 粘贴 →
+    100-160ms 等文本落框 → 回车。窗口间不再强插间隔。"""
     if auto is None:
         return False, "uiautomation 未安装"
     user32 = ctypes.windll.user32
@@ -215,33 +217,32 @@ def send_now(title, text):
 
     if user32.IsIconic(hwnd):
         user32.ShowWindow(hwnd, 9)
-        time.sleep(_j(0.6, 1.2))
+        time.sleep(_j(0.25, 0.40))
     user32.SetForegroundWindow(hwnd)
-    time.sleep(_j(0.4, 0.9))  # 激活后像人一样先停一下再动手
+    time.sleep(_j(0.06, 0.12))
 
-    c = auto.ControlFromHandle(hwnd)
-    r = c.BoundingRectangle
-    L, T, W, H = r.left, r.top, r.width(), r.height()
-    if W <= 0 or H <= 0:
-        return False, "窗口尺寸异常: " + title
-
-    # 落点在输入框区域随机化（±8%横向 / ±2%纵向），不再每次同一坐标
-    x = int(L + W * (INPUT_RX + random.uniform(-0.08, 0.08)))
-    y = int(T + H * (INPUT_RY + random.uniform(-0.02, 0.02)))
-    _human_move(x, y)
-    time.sleep(_j(0.10, 0.30))
-    user32.mouse_event(2, 0, 0, 0, 0)   # 按下
-    time.sleep(_j(0.03, 0.09))          # 真人按下到抬起有间隔
-    user32.mouse_event(4, 0, 0, 0, 0)   # 抬起
-    time.sleep(_j(0.30, 0.70))
+    if hwnd not in _CLICKED:
+        c = auto.ControlFromHandle(hwnd)
+        r = c.BoundingRectangle
+        L, T, W, H = r.left, r.top, r.width(), r.height()
+        if W <= 0 or H <= 0:
+            return False, "窗口尺寸异常: " + title
+        user32.SetCursorPos(int(L + W * INPUT_RX), int(T + H * INPUT_RY))
+        time.sleep(_j(0.03, 0.06))
+        user32.mouse_event(2, 0, 0, 0, 0)
+        time.sleep(0.02)
+        user32.mouse_event(4, 0, 0, 0, 0)
+        _CLICKED.add(hwnd)
+        time.sleep(_j(0.05, 0.10))
 
     auto.SetClipboardText(text)
-    auto.SendKeys("{Ctrl}a{Del}")
-    time.sleep(_j(0.15, 0.45))
-    auto.SendKeys("{Ctrl}v")
-    time.sleep(_j(0.40, 0.90))          # 粘贴后像人一样检查一眼再发
-    auto.SendKeys("{Enter}")
-    time.sleep(_j(0.50, 1.00))
+    # waitTime=0：uiautomation 默认每次 SendKeys 后强等 0.5s（3 次白耗 1.6s），压掉
+    auto.SendKeys("{Ctrl}a{Del}", waitTime=0)
+    time.sleep(_j(0.01, 0.03))
+    auto.SendKeys("{Ctrl}v", waitTime=0)
+    time.sleep(_j(0.10, 0.16))   # 等文本落进输入框，太快会发空消息
+    auto.SendKeys("{Enter}", waitTime=0)
+    time.sleep(_j(0.08, 0.15))
     return True, "ok"
 
 
@@ -263,7 +264,7 @@ def _worker(log=print):
                 log("wecom_ext worker异常(忽略继续): " + str(e)[:160])
             except Exception:
                 pass
-        time.sleep(8)
+        time.sleep(2)  # worker 唤醒间隔（8→2s，2026-10-13 提速：群转发时效）
 
 
 def _worker_once(log=print):
@@ -274,8 +275,9 @@ def _worker_once(log=print):
     e = _peek()
     if not e:
         return
-    # 条间间隔闸（相对上一次任意发送动作）
-    wait = _STATE["msg_gap"] + random.randint(0, 30) - (time.time() - _STATE["last_sent"])
+    # 条间间隔闸（相对上一次任意发送动作）：msg_gap 5s 基础 + 0~2s 微随机
+    # （2026-10-13 提速：原 0~30s 随机平均白等 20s，是群转发落后的大头，已砍）
+    wait = _STATE["msg_gap"] + random.randint(0, 2) - (time.time() - _STATE["last_sent"])
     if wait > 0:
         time.sleep(wait)
     for g in _STATE["groups"]:
@@ -299,7 +301,8 @@ def _worker_once(log=print):
                 log("wecom_ext 失败(跳过该窗): " + msg)
             except Exception:
                 pass
-        time.sleep(_STATE["win_gap"] + random.randint(0, 2))  # 窗口间间隔(1-3s随机)
+        gap = _STATE["win_gap"]
+        time.sleep(gap + random.uniform(0, gap * 0.3) if gap > 0 else _j(0.02, 0.06))
 
 
 def start(log=print):
