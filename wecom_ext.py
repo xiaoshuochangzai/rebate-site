@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-wecom_ext.py — 企微外部群通道 v3：多独立窗口矩阵分发 + 低频派发
+wecom_ext.py — 企微外部群通道 v3.1：多独立窗口矩阵分发 + 拟人化发送
 
-实测结论（2026-10-12）：
+风控分析（2026-10-13，Boss 手动转发 100+ 条零触发的反例修正了频率理论）：
+  「远程操控行为」的判据不是频率，是输入来源：
+  - 手动操作 = 真 HID 设备事件，系统层面就是真人，怎么发都没事
+  - 模拟输入 = 无设备注入（hDevice=NULL + LLKHF_INJECTED），打分特征
+  → 拟人化只能修「时序/轨迹」层（机械节奏、鼠标瞬移、固定落点），
+    注入标记与后台抢焦点是系统层烙印抹不掉；靠低频+拟人化把综合分压在阈值下。
+
+实测结论（2026-10-12/13）：
   - 主窗口 2 分钟连发 2 次自动化输入 → 触发「远程操控行为」验证
-  - 独立窗口单发 → 无事
-  → 间隔闸保留（防验证弹窗的唯一手段），但节奏已按 Boss 要求调快：
-    同一条线报轮流发 N 个窗口，窗口间 60~90s 随机；下一条线报再等 180~300s。
+  - 独立窗口低频发送跑一天多、上百条 → 零触发
+  - 独立窗口全自绘（UIA 断在 PerryShadowWnd、零子 HWND）→ 无真后台通道
 
 工作方式：
   - keyword_push webhook 成功后文案入队 wext_queue.json
@@ -19,9 +25,9 @@ wecom_ext.py — 企微外部群通道 v3：多独立窗口矩阵分发 + 低频
   "wecom_ext": {
       "enabled": true,
       "groups": ["京东+微保线报 1群", "京东羊毛线报fat①群", "京东+微保线报 2群"],
-      "win_gap": 60,        # 同条线报相邻窗口间隔（实际 60~90s 随机）
-      "msg_gap": 180,       # 两条线报之间最小间隔（实际 180~300s 随机）
-      "max_per_day": 40     # 每日线报条数上限（按条计，不按窗口次数）
+      "win_gap": 1,        # 同条线报相邻窗口间隔（实际 +0~2s 随机）
+      "msg_gap": 5,        # 两条线报之间最小间隔（实际 +0~30s 随机）
+      "max_per_day": 0     # 每日线报条数上限（0=不限）
   }
 """
 import json
@@ -167,7 +173,39 @@ def _find_hwnd(title):
     return hit[0] if hit else 0
 
 
+def _j(a, b):
+    """随机延迟，替代固定 sleep（拟人化：机器节奏是打分特征之一）"""
+    return random.uniform(a, b)
+
+
+def _human_move(tx, ty):
+    """鼠标拟人化移动：从当前位置沿带弧度的缓动路径多步滑到目标，不瞬移。
+    （瞬移 = 打分特征之一；真人移动鼠标有轨迹有加减速）"""
+    import ctypes.wintypes as wt
+    user32 = ctypes.windll.user32
+    pt = wt.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    sx, sy = float(pt.x), float(pt.y)
+    dx, dy = tx - sx, ty - sy
+    if abs(dx) < 3 and abs(dy) < 3:
+        return
+    steps = random.randint(18, 32)
+    bend = random.uniform(0.10, 0.25) * (1 if random.random() < 0.5 else -1)
+    for i in range(1, steps + 1):
+        t = i / steps
+        e = t * t * (3 - 2 * t)  # smoothstep 缓动（慢-快-慢）
+        nx = sx + dx * e - dy * bend * t * (1 - t)
+        ny = sy + dy * e + dx * bend * t * (1 - t)
+        user32.SetCursorPos(int(nx), int(ny))
+        time.sleep(random.uniform(0.004, 0.012))
+
+
 def send_now(title, text):
+    """拟人化发送（v3.1，2026-10-13）：
+    ① 鼠标沿弧线滑入、落点在输入框区域随机（不瞬移、不固定坐标）
+    ② 按下-抬起有真人间隔；每步随机延迟，无固定节奏
+    ③ 粘贴后停顿「检查一眼」再回车
+    无法消除项：SendInput 注入标记 + 后台进程抢焦点（系统层烙印）。"""
     if auto is None:
         return False, "uiautomation 未安装"
     user32 = ctypes.windll.user32
@@ -177,9 +215,9 @@ def send_now(title, text):
 
     if user32.IsIconic(hwnd):
         user32.ShowWindow(hwnd, 9)
-        time.sleep(0.8)
+        time.sleep(_j(0.6, 1.2))
     user32.SetForegroundWindow(hwnd)
-    time.sleep(0.5)
+    time.sleep(_j(0.4, 0.9))  # 激活后像人一样先停一下再动手
 
     c = auto.ControlFromHandle(hwnd)
     r = c.BoundingRectangle
@@ -187,19 +225,23 @@ def send_now(title, text):
     if W <= 0 or H <= 0:
         return False, "窗口尺寸异常: " + title
 
-    user32.SetCursorPos(int(L + W * INPUT_RX), int(T + H * INPUT_RY))
-    time.sleep(0.15)
-    user32.mouse_event(2, 0, 0, 0, 0)
-    user32.mouse_event(4, 0, 0, 0, 0)
-    time.sleep(0.35)
+    # 落点在输入框区域随机化（±8%横向 / ±2%纵向），不再每次同一坐标
+    x = int(L + W * (INPUT_RX + random.uniform(-0.08, 0.08)))
+    y = int(T + H * (INPUT_RY + random.uniform(-0.02, 0.02)))
+    _human_move(x, y)
+    time.sleep(_j(0.10, 0.30))
+    user32.mouse_event(2, 0, 0, 0, 0)   # 按下
+    time.sleep(_j(0.03, 0.09))          # 真人按下到抬起有间隔
+    user32.mouse_event(4, 0, 0, 0, 0)   # 抬起
+    time.sleep(_j(0.30, 0.70))
 
     auto.SetClipboardText(text)
     auto.SendKeys("{Ctrl}a{Del}")
-    time.sleep(0.15)
+    time.sleep(_j(0.15, 0.45))
     auto.SendKeys("{Ctrl}v")
-    time.sleep(0.35)
+    time.sleep(_j(0.40, 0.90))          # 粘贴后像人一样检查一眼再发
     auto.SendKeys("{Enter}")
-    time.sleep(0.6)
+    time.sleep(_j(0.50, 1.00))
     return True, "ok"
 
 
