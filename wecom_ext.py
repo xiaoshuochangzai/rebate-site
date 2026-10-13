@@ -201,13 +201,14 @@ def _human_move(tx, ty):
 
 # 独立窗口的输入框焦点是常驻的：每个窗口本会话点过一次输入框后，后续发送
 # 直接「激活→粘贴→回车」，不再点鼠标（更快，且注入事件少一半）
-_CLICKED = set()
+# （v3.2b 弃用该优化：1 群首击落点偏差导致静默失败，恢复每次点击）
 
 
 def send_now(title, text):
-    """极速发送（v3.2，2026-10-13 Boss 明令：3 个群 2 秒内发完）。
-    单窗目标 ≤0.6s：激活 60-120ms →（首窗才点输入框）→ Ctrl+A/Del → 粘贴 →
-    100-160ms 等文本落框 → 回车。窗口间不再强插间隔。"""
+    """极速发送（v3.2b，2026-10-13）。
+    v3.2b 修复：恢复「每次发送都点输入框」——v3.2 的每窗只点一次在 1 群踩雷：
+    首击落点偏了之后，后续全部粘贴进错误焦点，程序返回成功但群里永远收不到。
+    点击只花 ~0.15s，三群仍能压在 2 秒出头。"""
     if auto is None:
         return False, "uiautomation 未安装"
     user32 = ctypes.windll.user32
@@ -219,30 +220,28 @@ def send_now(title, text):
         user32.ShowWindow(hwnd, 9)
         time.sleep(_j(0.25, 0.40))
     user32.SetForegroundWindow(hwnd)
-    time.sleep(_j(0.06, 0.12))
+    time.sleep(_j(0.05, 0.09))
 
-    if hwnd not in _CLICKED:
-        c = auto.ControlFromHandle(hwnd)
-        r = c.BoundingRectangle
-        L, T, W, H = r.left, r.top, r.width(), r.height()
-        if W <= 0 or H <= 0:
-            return False, "窗口尺寸异常: " + title
-        user32.SetCursorPos(int(L + W * INPUT_RX), int(T + H * INPUT_RY))
-        time.sleep(_j(0.03, 0.06))
-        user32.mouse_event(2, 0, 0, 0, 0)
-        time.sleep(0.02)
-        user32.mouse_event(4, 0, 0, 0, 0)
-        _CLICKED.add(hwnd)
-        time.sleep(_j(0.05, 0.10))
+    c = auto.ControlFromHandle(hwnd)
+    r = c.BoundingRectangle
+    L, T, W, H = r.left, r.top, r.width(), r.height()
+    if W <= 0 or H <= 0:
+        return False, "窗口尺寸异常: " + title
+    user32.SetCursorPos(int(L + W * INPUT_RX), int(T + H * INPUT_RY))
+    time.sleep(_j(0.02, 0.05))
+    user32.mouse_event(2, 0, 0, 0, 0)
+    time.sleep(0.02)
+    user32.mouse_event(4, 0, 0, 0, 0)
+    time.sleep(_j(0.04, 0.08))
 
     auto.SetClipboardText(text)
     # waitTime=0：uiautomation 默认每次 SendKeys 后强等 0.5s（3 次白耗 1.6s），压掉
     auto.SendKeys("{Ctrl}a{Del}", waitTime=0)
     time.sleep(_j(0.01, 0.03))
     auto.SendKeys("{Ctrl}v", waitTime=0)
-    time.sleep(_j(0.10, 0.16))   # 等文本落进输入框，太快会发空消息
+    time.sleep(_j(0.08, 0.13))   # 等文本落进输入框，太快会发空消息
     auto.SendKeys("{Enter}", waitTime=0)
-    time.sleep(_j(0.08, 0.15))
+    time.sleep(_j(0.06, 0.12))
     return True, "ok"
 
 

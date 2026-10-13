@@ -20,6 +20,7 @@ PUT_RETRIES = 2  # 首次 + 2 次重试 = 最多 3 发
 
 _OPENER_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _OPENER_PROXY = None  # 懒加载
+_PROXY_DEAD = {"flag": False}  # 7890 没在跑就置位，本会话不再浪费时间试它（2026-10-13）
 
 
 def _token():
@@ -28,18 +29,28 @@ def _token():
 
 
 def _open_req(req, timeout=60):
-    """直连优先，失败走 7890 代理。req 已带 method/headers。"""
+    """直连优先；直连网络失败且 7890 活着才走代理（代理拒连=没在跑，标记后不再试）。
+    HTTPError 原样抛给上层按状态码处理。"""
     req.add_header("Authorization", f"Bearer {_token()}")
     req.add_header("Content-Type", "application/json")
     try:
         return _OPENER_DIRECT.open(req, timeout=timeout)
+    except urllib.error.HTTPError:
+        raise
     except Exception:
-        global _OPENER_PROXY
-        if _OPENER_PROXY is None:
-            _OPENER_PROXY = urllib.request.build_opener(
-                urllib.request.ProxyHandler({"http": "http://127.0.0.1:7890",
-                                             "https": "http://127.0.0.1:7890"}))
+        if _PROXY_DEAD["flag"]:
+            raise
+    global _OPENER_PROXY
+    if _OPENER_PROXY is None:
+        _OPENER_PROXY = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": "http://127.0.0.1:7890",
+                                         "https": "http://127.0.0.1:7890"}))
+    try:
         return _OPENER_PROXY.open(req, timeout=timeout)
+    except urllib.error.URLError as e:
+        if "10061" in str(getattr(e, "reason", "")) or "refused" in str(getattr(e, "reason", "")).lower():
+            _PROXY_DEAD["flag"] = True  # 7890 没在跑（FlyClash 残留系统代理），别再试
+        raise
 
 
 def put_deals(deals):
@@ -70,7 +81,18 @@ def put_deals(deals):
                 msg += f"（已重试 {used} 次后仍失败）"
             return False, msg
         except Exception as e:
-            return False, str(e)[:150]
+            # 网络层异常（直连抖动/超时/代理拒连）也要重试——2026-10-13 前
+            # 这类错误直接判死返回失败，一次抖动就废一轮，是网站落后几分钟的主因
+            msg = str(e)[:150]
+            if attempt < PUT_RETRIES:
+                wait = 3 * (attempt + 1)
+                print(f"[cf_kv] 网络异常（{msg}），{wait}s 后重试（{attempt + 1}/{PUT_RETRIES}）")
+                used += 1
+                time.sleep(wait)
+                continue
+            if used:
+                msg += f"（已重试 {used} 次后仍失败）"
+            return False, msg
     return False, msg
 
 
