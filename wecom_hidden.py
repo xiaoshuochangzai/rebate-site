@@ -131,11 +131,25 @@ def main_wxwork_windows():
 
 def cmd_start():
     st = load_state()
+    # 清理残留的旧 peek 进程（避免旧热键占位导致新热键注册失败）
+    try:
+        import psutil
+        for pr in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                nm = (pr.info.get("name") or "").lower()
+                cl = " ".join(pr.info.get("cmdline") or [])
+                if nm == "pythonw.exe" and "wecom_peek" in cl:
+                    pr.kill()
+                    log("清理残留 peek PID=%d" % pr.info["pid"])
+            except Exception:
+                pass
+    except ImportError:
+        pass
     if alive(st.get("wxwork_pid")) or alive(st.get("worker_pid")):
         log("隐身桌面已在运行（wxwork=%s worker=%s），无需重复启动" %
             (st.get("wxwork_pid"), st.get("worker_pid")))
         return 0
-    if alive(main_wxwork_running_pid()):
+    if main_wxwork_windows():
         log("主桌面企微还在运行，先关闭它（taskkill WXWork.exe）")
         subprocess.run(["taskkill", "/IM", "WXWork.exe", "/F"],
                        creationflags=0x08000000, capture_output=True)
@@ -172,36 +186,24 @@ def cmd_start():
         log("wext_worker 启动失败 err=%d" % kernel32.GetLastError())
         return 1
     log("wext_worker 已生在隐藏桌面 PID=%d" % pid2)
-    # 6. 热键切换器（跑在主桌面）
-    ok3, pi3, pid3 = spawn_on_desktop(PYW, '-u "%s"' % os.path.join(BASE, "wecom_peek.py"))
-    if not ok3:
-        # peek 必须在主桌面 —— 用普通方式启动（不带 lpDesktop）
-        pi3 = None
-        p = subprocess.Popen([PYW, "-u", os.path.join(BASE, "wecom_peek.py")],
-                             cwd=BASE, creationflags=0x08000000)
-        pid3 = p.pid
-        log("wecom_peek 已在主桌面启动 PID=%d" % pid3)
-    else:
-        # spawn_on_desktop 会把 peek 也生到隐藏桌面（错），杀掉改走普通方式
-        kill(pid3)
-        p = subprocess.Popen([PYW, "-u", os.path.join(BASE, "wecom_peek.py")],
-                             cwd=BASE, creationflags=0x08000000)
-        pid3 = p.pid
-        log("wecom_peek 已在主桌面启动 PID=%d" % pid3)
-    save_state({"wxwork_pid": pid, "worker_pid": pid2, "peek_pid": pid3})
+    # 6a. 返回热键（Ctrl+Alt+Q）必须生在隐身桌面才响应（热键不跨桌面）
+    ok3, pi3, pid3 = spawn_on_desktop(PYW, '-u "%s" --return' % os.path.join(BASE, "wecom_peek.py"))
+    log("返回热键(Ctrl+Alt+Q)已生在隐身桌面 PID=%d" % pid3 if ok3 else "返回热键启动失败")
+    # 6b. 主桌面侧：进隐身热键(Ctrl+Alt+Z) + 看门狗（普通方式，留在主桌面）
+    p = subprocess.Popen([PYW, "-u", os.path.join(BASE, "wecom_peek.py")],
+                         cwd=BASE, creationflags=0x08000000)
+    pid4 = p.pid
+    log("wecom_peek 主桌面侧(进隐身+看门狗)已启动 PID=%d" % pid4)
+    save_state({"wxwork_pid": pid, "worker_pid": pid2, "peek_pid": pid3, "peek_main_pid": pid4})
     log("全部就绪。热键 Ctrl+Alt+Z 切换查看隐藏桌面里的企微。")
     return 0
-
-
-def main_wxwork_running_pid():
-    """探测主桌面是否在跑企微（供 taskkill 判断）—— 简化：始终尝试关闭"""
-    return "any"
 
 
 def cmd_stop():
     st = load_state()
     kill(st.get("worker_pid"))
     kill(st.get("peek_pid"))
+    kill(st.get("peek_main_pid"))
     kill(st.get("wxwork_pid"))
     # 兜底：按名清一次
     subprocess.run(["taskkill", "/IM", "WXWork.exe", "/F"],

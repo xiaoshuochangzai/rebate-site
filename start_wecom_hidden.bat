@@ -1,16 +1,14 @@
 @echo off
-chcp 65001 >nul
-cd /d E:\Jingdong\rebate-site
-set PY=C:\Users\23058\.workbuddy\binaries\python\envs\default\Scripts\python.exe
-
-echo 启动隐身推送桌面（企微+WextWorker 搬进隐藏桌面, 热键 Ctrl+Alt+Z 查看）...
+cd /d E://Jingdong//rebate-site
+set PY=C://Users//23058//.workbuddy//binaries//python//envs//default//Scripts//python.exe
+echo [1/2] Starting hidden wecom desktop (WXWork + worker + peek)...
 "%PY%" wecom_hidden.py start
-if errorlevel 1 (
-  echo 启动失败，见 wecom_hidden.log
-  pause
-  exit /b 1
-)
-echo.
-echo 完成！企业微信已隐身。Ctrl+Alt+Z 切换查看。
-echo 首次启动请在隐身桌面里打开 3 个线报群的独立会话窗口（右键群-独立窗口）。
+if errorlevel 1 goto fail
+echo [2/2] Done. Press Ctrl+Alt+Z to peek the hidden desktop (open the 3 group windows there).
+echo This window can be closed now.
 pause
+exit /b 0
+:fail
+echo START FAILED - see wecom_hidden.log
+pause
+exit /b 1
