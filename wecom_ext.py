@@ -43,6 +43,7 @@ except ImportError:
     auto = None
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+FLAG_EXTERNAL = os.path.join(BASE, "wext_worker_external.flag")  # 隐身桌面 worker 接管标记（2026-10-15）
 QUEUE_FILE = os.path.join(BASE, "wext_queue.json")
 STATE_FILE = os.path.join(BASE, "wext_state.json")
 LOCK = threading.Lock()
@@ -267,6 +268,10 @@ def _worker(log=print):
 
 
 def _worker_once(log=print):
+    # 隐身桌面外部 worker 接管时本线程休眠（企业微信整体搬到 WecomPush 隐藏桌面，
+    # 2026-10-15 Boss 明令「不影响我使用电脑」）；worker 停止后标记消失自动苏醒
+    if os.path.exists(FLAG_EXTERNAL) and os.environ.get("WEXT_WORKER") != "1":
+        return
     if not _STATE["enabled"] or not _STATE["groups"]:
         return
     if _STATE["max_per_day"] > 0 and _STATE["day_cnt"] >= _STATE["max_per_day"]:
