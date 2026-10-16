@@ -725,6 +725,12 @@ def main():
                     KW_QUEUE.clear()
             except Exception as e:
                 log(f"关键词推送异常：{str(e)[:80]}")
+            # 23:27 收播公告（Boss 2026-10-16 明令）：必须每轮无条件查——
+            # 挂在 flush 里时 23:27 后没新线报就一次都不执行，公告发不出去（10-16 晚踩坑）
+            try:
+                keyword_push.night_tick(log=log)
+            except Exception as e:
+                log(f"夜闸检查异常：{str(e)[:80]}")
             # 每 20 轮（约 10 分钟）打一次推送通道状态，方便排查
             _ROUND[0] += 1
             if _ROUND[0] % 20 == 0 or _ROUND[0] == 1:

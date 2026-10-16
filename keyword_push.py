@@ -348,8 +348,10 @@ def _drop_stale(items, log=print):
 
 
 def _send_announce(log=print):
-    """收播公告：主群 webhook 真正 @所有人（mentioned_list），外部群走 RPA 队列（纯文本）。"""
+    """收播公告：主群 webhook 真正 @所有人（mentioned_list），外部群走 RPA 队列（纯文本）。
+    返回 True=主群确认送达（errcode==0）。"""
     wh = _STATE.get("webhook", "")
+    ok = False
     results = []
     if wh:
         try:
@@ -359,27 +361,35 @@ def _send_announce(log=print):
                                          headers={"Content-Type": "application/json"})
             with OPENER.open(req, timeout=10) as r:
                 d = json.loads(r.read().decode("utf-8"))
-            results.append("主群@" + ("ok" if d.get("errcode") == 0
-                                      else f"err{d.get('errcode')}"))
+            ok = (d.get("errcode") == 0)
+            results.append("主群@" + ("ok" if ok else f"err{d.get('errcode')}"))
         except Exception as e:
             results.append("主群fail:" + str(e)[:50])
+    else:
+        results.append("无webhook")
     if wecom_ext is not None:
         wecom_ext.enqueue(NIGHT_MSG)
         results.append("外部群已入队")
-    log("[夜闸] 收播公告已发: " + " | ".join(results))
+    log("[夜闸] 收播公告: " + " | ".join(results))
+    return ok
 
 
 def _night_gate(log=print):
-    """23:27-24:00 夜闸期：每天发一次收播公告，并拦下所有线报推送。返回 True=处于夜闸期。"""
+    """23:27-24:00 夜闸期：发一次收播公告（发成功才记当天已发，失败下轮重试），
+    并拦下所有线报推送。返回 True=处于夜闸期。由监控主循环每轮无条件调用（night_tick），
+    不能只挂在 flush 里——23:27 后没有新线报时 flush 不会被调，公告就发不出去（10-16 晚踩坑）。"""
     if time.strftime("%H:%M") < NIGHTGATE_HM:
         return False
     today = time.strftime("%Y-%m-%d")
     st = _load_state()
     if st.get("announced_on") != today:
-        st["announced_on"] = today
-        _save_json(STATE_FILE, st)
-        _send_announce(log)
+        if _send_announce(log):
+            st["announced_on"] = today
+            _save_json(STATE_FILE, st)
     return True
+
+
+night_tick = _night_gate   # 监控主循环每轮无条件调用的别名
 
 
 def flush(deals, log=print):
