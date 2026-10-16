@@ -274,6 +274,9 @@ def _worker_once(log=print):
     e = _peek()
     if not e:
         return
+    # 23:27 夜闸（Boss 2026-10-16 明令）：此后线报不再派发，只放行收播公告（@所有人 那条）
+    if time.strftime("%H:%M") >= "23:27" and not e.get("t", "").startswith("@所有人"):
+        return
     # 条间间隔闸（相对上一次任意发送动作）：msg_gap 5s 基础 + 0~2s 微随机
     # （2026-10-13 提速：原 0~30s 随机平均白等 20s，是群转发落后的大头，已砍）
     wait = _STATE["msg_gap"] + random.randint(0, 2) - (time.time() - _STATE["last_sent"])

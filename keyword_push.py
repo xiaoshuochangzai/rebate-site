@@ -47,6 +47,10 @@ JD_TAG = "【京东】"       # 京东线报消息开头平台标识（Boss 2026
 TB_TAG = "【淘宝】"       # 淘宝必推榜消息开头平台标识（Boss 2026-10-16 明令）
 FOOTER_EVERY = 5         # 京东每发满 5 条消息才带一次底部站链尾，其余不带（Boss 2026-09-16 明令）
 TB_FOOTER_EVERY = 2      # 淘宝每 2 条带一次双11破价站链尾（Boss 2026-10-16 明令，替代旧「淘宝无尾」规则）
+
+# ---- 23:27 夜闸（Boss 2026-10-16 明令：电脑 23:30 自动关机）----
+NIGHTGATE_HM = "23:27"   # 此刻起停发一切线报，改发一次收播公告；次日 0 点自动恢复
+NIGHT_MSG = "@所有人 今日劲爆低价线报都在下面网站，不要错过\nhttps://shengqian.cyou/"
 REDPACK_EVERY = 1        # 京东每 2 条带一次红包推广（Boss 2026-10-13 明令）
 REDPACK_URL = "https://u.jd.com/FrBoSd3"
 # 钩子按线报内容匹配（Boss 2026-10-13 明令：与线报文案相配，嵌入无违和）：
@@ -343,12 +347,50 @@ def _drop_stale(items, log=print):
     return keep
 
 
+def _send_announce(log=print):
+    """收播公告：主群 webhook 真正 @所有人（mentioned_list），外部群走 RPA 队列（纯文本）。"""
+    wh = _STATE.get("webhook", "")
+    results = []
+    if wh:
+        try:
+            payload = json.dumps({"msgtype": "text", "text": {
+                "content": NIGHT_MSG, "mentioned_list": ["@all"]}}).encode("utf-8")
+            req = urllib.request.Request(wh, data=payload,
+                                         headers={"Content-Type": "application/json"})
+            with OPENER.open(req, timeout=10) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            results.append("主群@" + ("ok" if d.get("errcode") == 0
+                                      else f"err{d.get('errcode')}"))
+        except Exception as e:
+            results.append("主群fail:" + str(e)[:50])
+    if wecom_ext is not None:
+        wecom_ext.enqueue(NIGHT_MSG)
+        results.append("外部群已入队")
+    log("[夜闸] 收播公告已发: " + " | ".join(results))
+
+
+def _night_gate(log=print):
+    """23:27-24:00 夜闸期：每天发一次收播公告，并拦下所有线报推送。返回 True=处于夜闸期。"""
+    if time.strftime("%H:%M") < NIGHTGATE_HM:
+        return False
+    today = time.strftime("%Y-%m-%d")
+    st = _load_state()
+    if st.get("announced_on") != today:
+        st["announced_on"] = today
+        _save_json(STATE_FILE, st)
+        _send_announce(log)
+    return True
+
+
 def flush(deals, log=print):
     """推送本轮新线报（京东全推；淘宝需命中关键词）。deals=本轮新入库线报列表（时间倒序）。
     节流：先进 pending，攒够 MAX_PER_ROUND 条 或 距上次推送超过 min_interval 秒才发；
     发送时按 70/30 配比（京东≤7 + 淘宝≤3）。
     返回推送条数。每次调用都重读配置（改 keyword_config.json 热生效）。"""
     _load_config()
+    # 23:27 夜闸（Boss 2026-10-16 明令）：此后停发线报，改发收播公告，电脑 23:30 关机
+    if _night_gate(log=log):
+        return 0
     # 京东不限关键词，必推榜新品也不看关键词；两者都没有时才因为没有关键词直接返回
     if not _STATE["keywords"] and not any(d.get("_bitui") for d in deals):
         return 0
