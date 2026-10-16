@@ -212,6 +212,65 @@ def _human_move(tx, ty):
 # （v3.2b 弃用该优化：1 群首击落点偏差导致静默失败，恢复每次点击）
 
 
+def _clip_get():
+    """备份当前剪贴板文本（拿不到返回 None，不影响发送）"""
+    try:
+        user32 = ctypes.windll.user32
+        if not user32.OpenClipboard(0):
+            return None
+        try:
+            h = user32.GetClipboardData(13)   # CF_UNICODETEXT
+            if not h:
+                return None
+            p = user32.GlobalLock(h)
+            if not p:
+                return None
+            s = ctypes.c_wchar_p(p).value
+            user32.GlobalUnlock(h)
+            return s
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return None
+
+
+def _clip_put(s):
+    try:
+        if s is not None:
+            auto.SetClipboardText(s)
+    except Exception:
+        pass
+
+
+def _force_foreground(hwnd):
+    """可靠抢前台：普通 SetForegroundWindow 被系统前台锁拦（后台进程禁止抢焦点）。
+    组合拳：①先按一下 Alt（欺骗系统「正响应用户输入」）②AttachThreadInput 挂到
+    当前前台线程再切（共享输入状态后允许切换）。返回 True=已到前台。"""
+    user32 = ctypes.windll.user32
+    if user32.GetForegroundWindow() == hwnd:
+        return True
+    user32.keybd_event(0x12, 0, 0, 0)      # Alt down（前台锁骗过键）
+    user32.keybd_event(0x12, 0, 2, 0)      # Alt up
+    time.sleep(0.02)
+    fg = user32.GetForegroundWindow()
+    tid_me = ctypes.windll.kernel32.GetCurrentThreadId()
+    tid_fg = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+    attached = False
+    try:
+        if tid_fg and tid_fg != tid_me:
+            attached = bool(user32.AttachThreadInput(tid_me, tid_fg, True))
+        user32.ShowWindow(hwnd, 9)   # SW_SHOW / 恢复
+        user32.BringWindowToTop(hwnd)
+        ok = bool(user32.SetForegroundWindow(hwnd))
+        if not ok:
+            user32.SwitchToThisWindow(hwnd, True)
+            ok = user32.GetForegroundWindow() == hwnd
+        return ok
+    finally:
+        if attached:
+            user32.AttachThreadInput(tid_me, tid_fg, False)
+
+
 def send_now(title, text):
     """主窗口 RPA 发送（v4，2026-10-16，Boss 明令恢复最初方案，直发真实线报不做测试）。
     流程：激活主窗口 → Ctrl+F 搜索 → 粘贴群名 → 回车进群 → 点输入框 → 粘贴文案 → 回车。
@@ -232,10 +291,9 @@ def send_now(title, text):
         if rr.left < -20000 or rr.left >= user32.GetSystemMetrics(0):
             user32.MoveWindow(hwnd, 60, 60, 1000, 720, True)   # 强制挪回屏幕内
             time.sleep(_j(0.15, 0.25))
-    user32.SetForegroundWindow(hwnd)
-    time.sleep(_j(0.06, 0.10))
-    if user32.GetForegroundWindow() != hwnd:
+    if not _force_foreground(hwnd):
         return False, "焦点切换失败(主窗口未激活)"
+    time.sleep(_j(0.06, 0.10))
 
     r = auto.ControlFromHandle(hwnd).BoundingRectangle
     L, T, W, H = r.left, r.top, r.width(), r.height()
