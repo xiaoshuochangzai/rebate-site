@@ -212,9 +212,90 @@ pointer-events:none;z-index:99}
 #top{position:fixed;right:24px;bottom:34px;width:44px;height:44px;border-radius:50%;
 background:linear-gradient(90deg,#FF7D00,#FF0A00);color:#fff;border:0;font-size:20px;cursor:pointer;
 box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
+/* ---------- 双11红包轮播 banner（2026-10-16 Boss 明令） ---------- */
+.hb-banner{position:relative;overflow:hidden;max-width:1230px;margin:10px auto 0;padding:0 20px}
+@media(max-width:640px){.hb-banner{padding:0 10px;margin-top:8px}}
+.hb-track{display:flex;transition:transform .45s ease}
+.hb-slide{flex:0 0 100%;display:flex;align-items:center;gap:10px;height:62px;padding:0 18px;
+border-radius:12px;color:#fff;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent}
+.hb-jd{background:linear-gradient(90deg,#E12319,#FF6A00)}
+.hb-tb{background:linear-gradient(90deg,#FF5000,#FF8F1F)}
+.hb-tag{background:rgba(255,255,255,.22);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap}
+.hb-main{font-size:17px;font-weight:800;letter-spacing:.5px;white-space:nowrap}
+.hb-sub{margin-left:auto;font-size:12px;opacity:.92;white-space:nowrap}
+@media(max-width:640px){.hb-slide{height:54px;padding:0 14px}.hb-main{font-size:15px}}
+.hb-dots{position:absolute;right:28px;bottom:7px;display:flex;gap:5px;pointer-events:none}
+.hb-dot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.55)}
+.hb-dot.on{background:#fff}
 </style>
 </head>
 <body>
+
+<div class="hb-banner">
+  <div class="hb-track" id="hbTrack">
+    <a class="hb-slide hb-jd" href="javascript:;" id="hbJD">
+      <span class="hb-tag">京东双11</span>
+      <span class="hb-main">京享红包 立即领取</span>
+      <span class="hb-sub">微信内直接领</span>
+    </a>
+    <a class="hb-slide hb-tb" href="javascript:;" id="hbTB">
+      <span class="hb-tag">淘宝双11</span>
+      <span class="hb-main">超级红包 限时加码</span>
+      <span class="hb-sub">点击跳转淘宝APP领取</span>
+    </a>
+  </div>
+  <div class="hb-dots"><i class="hb-dot on"></i><i class="hb-dot"></i></div>
+</div>
+
+<script>
+(function(){
+  var JD_URL='https://u.jd.com/FDFQoBI';
+  var TB_LAND='https://m.tb.cn/h.jXgUEoC';
+  var TB_KOULING='77￥ HU926 6FiQTthHJE8￥';
+  function isWX(){return /MicroMessenger/i.test(navigator.userAgent);}
+  function isMobile(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);}
+  function legacyCopy(t){
+    try{var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);}catch(e){}
+  }
+  function copyText(t){
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).catch(function(){legacyCopy(t);});
+    }else{legacyCopy(t);}
+  }
+  function toastMsg(m){
+    var el=document.getElementById('toast');if(!el){alert(m);return;}
+    el.textContent=m;el.classList.add('show');
+    setTimeout(function(){el.classList.remove('show');},2200);
+  }
+  document.getElementById('hbJD').addEventListener('click',function(){
+    if(!isMobile()){window.open(JD_URL,'_blank');return;}
+    if(isWX()){location.href=JD_URL;return;}   // 微信内：直接进红包H5领取
+    // 其它移动端：先尝试唤起京东APP，2秒后仍在页面则回落H5领取页
+    var scheme='openapp.jdmobile://virtual?params='+encodeURIComponent(JSON.stringify({category:'jump',des:'m',url:JD_URL}));
+    var t0=Date.now();
+    var ifr=document.createElement('iframe');ifr.style.display='none';ifr.src=scheme;document.body.appendChild(ifr);
+    setTimeout(function(){
+      try{document.body.removeChild(ifr);}catch(e){}
+      if(document.visibilityState==='visible'&&Date.now()-t0<2500){location.href=JD_URL;}
+    },2000);
+  });
+  document.getElementById('hbTB').addEventListener('click',function(){
+    if(!isMobile()){window.open(TB_LAND,'_blank');return;}
+    copyText(TB_KOULING);                       // 口令进剪贴板，淘宝APP打开自动识别
+    toastMsg('口令已复制，打开淘宝APP领取');
+    setTimeout(function(){location.href=TB_LAND;},450);
+  });
+  // 自动轮播（3.5s/张）
+  var track=document.getElementById('hbTrack'),idx=0,N=2;
+  setInterval(function(){
+    idx=(idx+1)%N;
+    track.style.transform='translateX(-'+(idx*100)+'%)';
+    var dots=document.querySelectorAll('.hb-dot');
+    for(var i=0;i<dots.length;i++){dots[i].classList.toggle('on',i===idx);}
+  },3500);
+})();
+</script>
 
 <div class="topbar">
   <div class="topbar-inner">
