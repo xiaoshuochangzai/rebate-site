@@ -44,7 +44,9 @@ JD_QUOTA = 7             # 每轮京东最多推几条（70%）——各守各�
 TB_QUOTA = 3             # 每轮淘宝最多推几条（30%）
 TB_SEP = "——"            # 淘宝多条合并时每条线报之间的分隔行（Boss 2026-09-11 明令，方便看清哪到哪是一条）
 JD_TAG = "【京东】"       # 京东线报消息开头平台标识（Boss 2026-09-16 明令）
-FOOTER_EVERY = 5         # 每发满 5 条消息才带一次底部站链尾，其余不带（Boss 2026-09-16 明令）
+TB_TAG = "【淘宝】"       # 淘宝必推榜消息开头平台标识（Boss 2026-10-16 明令）
+FOOTER_EVERY = 5         # 京东每发满 5 条消息才带一次底部站链尾，其余不带（Boss 2026-09-16 明令）
+TB_FOOTER_EVERY = 2      # 淘宝每 2 条带一次双11破价站链尾（Boss 2026-10-16 明令，替代旧「淘宝无尾」规则）
 REDPACK_EVERY = 1        # 京东每 2 条带一次红包推广（Boss 2026-10-13 明令）
 REDPACK_URL = "https://u.jd.com/FrBoSd3"
 # 钩子按线报内容匹配（Boss 2026-10-13 明令：与线报文案相配，嵌入无违和）：
@@ -215,6 +217,14 @@ def _bump_sent(n=1):
 
 def _load_sent():
     return int(_load_state().get("sent_cnt", 0) or 0)
+
+
+def _bump_tb_sent(n=1):
+    """淘宝已发条数（用于「每 2 条带一次站链尾」，Boss 2026-10-16 明令），返回本次发完后的累计值。"""
+    st = _load_state()
+    st["tb_sent_cnt"] = int(st.get("tb_sent_cnt", 0) or 0) + n
+    _save_json(STATE_FILE, st)
+    return st["tb_sent_cnt"]
 
 
 def _fmt_one(deal):
@@ -395,6 +405,8 @@ def flush(deals, log=print):
             ok_any = True
         time.sleep(JD_SEND_GAP)
     # Boss 2026-10-07 明令：淘宝（必推榜）也改成一条一条单独发，不再多条合并
+    # Boss 2026-10-16 明令：每条开头加【淘宝】；每 2 条在尾巴加双11破价站链尾（替代旧「淘宝无尾」）
+    TB_FOOTER = "————\n更多双11破价好物，访问线报网\nhttps://shengqian.cyou/"
     for d in tb:
         t = _fmt_one(d).strip()
         # Boss 2026-10-12 明令：s.click 一律滤掉（含必推榜积压的旧文案），只留淘口令
@@ -402,9 +414,10 @@ def flush(deals, log=print):
         if not t:
             sent_ids.append(str(d.get("id")))  # 空文案没得发，直接标已推，防死循环
             continue
-        # 淘宝消息一律不带底部站链尾，也不计入「每5条」的计数（计数只按京东走）
-        ok, msg = _send(t, log)
-        msgs.append(f"淘宝1条(无尾)({msg})")
+        tb_cnt = _bump_tb_sent()   # 独立计数，重启接着数（与京东 sent_cnt 分开）
+        tail = "\n" + TB_FOOTER if tb_cnt % TB_FOOTER_EVERY == 0 else ""
+        ok, msg = _send(TB_TAG + t + tail, log)
+        msgs.append(f"淘宝1条({'带尾' if tail else '无尾'})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))
             ok_any = True
