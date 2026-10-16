@@ -435,13 +435,17 @@ def flush(deals, log=print):
         if not t:
             sent_ids.append(str(d.get("id")))  # 空文案没得发，直接标已推，防死循环
             continue
-        sent_cnt = _bump_sent()  # 每 5 条才带一次站链尾（Boss 2026-09-16 明令）
-        # 京东每 2 条套一次红包钩子（按天轮换 5 套，Boss 2026-10-13 明令）；站链尾垫底
+        sent_cnt = _bump_sent()  # 站链尾/红包尾都靠这个计数（重启接着数）
+        # Boss 2026-10-16 明令：京享红包不再插进消息中间，改成每 2 条在【最后】垫红包尾；
+        # 红包尾和每 5 条的旧站链尾都指向 shengqian.cyou，带红包尾的那条就不再叠旧站链尾
         if sent_cnt % REDPACK_EVERY == 0:
-            t = _apply_redpack(t)
-        tail = "\n" + FOOTER if sent_cnt % FOOTER_EVERY == 0 else ""
+            tail = "\n————\n下单前先领京东红包，更省钱\nhttps://shengqian.cyou/"
+        elif sent_cnt % FOOTER_EVERY == 0:
+            tail = "\n" + FOOTER
+        else:
+            tail = ""
         ok, msg = _send(JD_TAG + t + tail, log)
-        msgs.append(f"京东1条({'红包' if sent_cnt % REDPACK_EVERY == 0 else ''}{'带站链尾' if sent_cnt % FOOTER_EVERY == 0 else '无尾'})({msg})")
+        msgs.append(f"京东1条({'红包尾' if sent_cnt % REDPACK_EVERY == 0 else ('站尾' if tail else '无尾')})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))
             ok_any = True
