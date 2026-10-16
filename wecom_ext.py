@@ -36,6 +36,7 @@ import random
 import threading
 import time
 import ctypes
+import ctypes.wintypes
 
 try:
     import uiautomation as auto
@@ -43,13 +44,16 @@ except ImportError:
     auto = None
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-FLAG_EXTERNAL = os.path.join(BASE, "wext_worker_external.flag")  # 隐身桌面 worker 接管标记（2026-10-15）
 QUEUE_FILE = os.path.join(BASE, "wext_queue.json")
 STATE_FILE = os.path.join(BASE, "wext_state.json")
 LOCK = threading.Lock()
 
-WND_CLASS = "WwStandaloneConversationWnd"
-INPUT_RX, INPUT_RY = 0.50, 0.88   # 输入框在独立窗口内的相对位置（实测）
+# v4（2026-10-16，Boss 明令回归主窗口 RPA）：不再依赖独立聊天窗口，
+# 直接在企微主窗口里「Ctrl+F 搜群 → 回车进群 → 点输入框 → 粘贴 → 回车」。
+# 已知风险（Boss 知情）：主窗口连发曾触发「远程操控行为」验证（10-12，2 分钟 2 条），
+# 靠 msg_gap 节流 + 独立窗口时代的低频纪律压制。
+MAIN_CLASS = "WeWorkWindow"
+INPUT_RX, INPUT_RY = 0.60, 0.89   # 输入框在主窗口内的相对位置（主窗口含左侧栏，偏右）
 DROP_AFTER = 3600                 # 队列条目 1 小时未发完即丢弃
 
 _STATE = {"enabled": False, "groups": [], "win_gap": 60, "msg_gap": 180,
@@ -149,29 +153,32 @@ def _mark_done(group):
         json.dump(q, open(QUEUE_FILE, "w", encoding="utf-8"), ensure_ascii=False)
 
 
-def _find_hwnd(title):
+def _find_main():
+    """找企微主窗口（WeWorkWindow）。
+    实测（2026-10-16）：企微开 4 个同类窗口——3 个不可见辅助窗（0,0 同尺寸）+ 1 个真主窗；
+    主窗最小化到托盘时 visible=1、iconic=1、被挪到屏幕外 (-25600)。所以筛选只认
+    IsWindowVisible，iconic 交给 send_now 的 SW_RESTORE 恢复；可见窗里优先非最小化的。"""
     user32 = ctypes.windll.user32
-    hwnd = user32.FindWindowW(WND_CLASS, title)
-    if hwnd:
-        return hwnd
-    want = title.replace(" ", "")
-    hit = []
+    vis, vis_iconic = [], []
 
     CMPFUNC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))
 
     def cb(h, _):
-        buf = ctypes.create_unicode_buffer(128)
-        user32.GetClassNameW(h, buf, 128)
-        if buf.value == WND_CLASS:
-            b2 = ctypes.create_unicode_buffer(256)
-            user32.GetWindowTextW(h, b2, 256)
-            if want and want in b2.value.replace(" ", ""):
-                hit.append(h)
-                return False
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(h, buf, 64)
+        if buf.value == MAIN_CLASS and user32.IsWindowVisible(h):
+            r = ctypes.wintypes.RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            if (r.right - r.left) > 300:
+                (vis if not user32.IsIconic(h) else vis_iconic).append(h)
         return True
 
     user32.EnumWindows(CMPFUNC(cb), None)
-    return hit[0] if hit else 0
+    if vis:
+        return vis[0]
+    if vis_iconic:
+        return vis_iconic[0]
+    return 0
 
 
 def _j(a, b):
@@ -206,43 +213,70 @@ def _human_move(tx, ty):
 
 
 def send_now(title, text):
-    """极速发送（v3.2b，2026-10-13）。
-    v3.2b 修复：恢复「每次发送都点输入框」——v3.2 的每窗只点一次在 1 群踩雷：
-    首击落点偏了之后，后续全部粘贴进错误焦点，程序返回成功但群里永远收不到。
-    点击只花 ~0.15s，三群仍能压在 2 秒出头。"""
+    """主窗口 RPA 发送（v4，2026-10-16，Boss 明令恢复最初方案，直发真实线报不做测试）。
+    流程：激活主窗口 → Ctrl+F 搜索 → 粘贴群名 → 回车进群 → 点输入框 → 粘贴文案 → 回车。
+    防假成功：焦点切不上主窗口直接报失败（隐身桌面静默失败的教训）。"""
     if auto is None:
         return False, "uiautomation 未安装"
     user32 = ctypes.windll.user32
-    hwnd = _find_hwnd(title)
+    hwnd = _find_main()
     if not hwnd:
-        return False, "独立窗口未打开: " + title
+        return False, "企微主窗口未打开"
 
+    prev_fg = user32.GetForegroundWindow()
     if user32.IsIconic(hwnd):
-        user32.ShowWindow(hwnd, 9)
+        user32.ShowWindow(hwnd, 9)   # SW_RESTORE：从托盘最小化恢复（窗口可能仍停在 -25600 屏幕外）
         time.sleep(_j(0.25, 0.40))
+        rr = ctypes.wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rr))
+        if rr.left < -20000 or rr.left >= user32.GetSystemMetrics(0):
+            user32.MoveWindow(hwnd, 60, 60, 1000, 720, True)   # 强制挪回屏幕内
+            time.sleep(_j(0.15, 0.25))
     user32.SetForegroundWindow(hwnd)
-    time.sleep(_j(0.05, 0.09))
+    time.sleep(_j(0.06, 0.10))
+    if user32.GetForegroundWindow() != hwnd:
+        return False, "焦点切换失败(主窗口未激活)"
 
-    c = auto.ControlFromHandle(hwnd)
-    r = c.BoundingRectangle
+    r = auto.ControlFromHandle(hwnd).BoundingRectangle
     L, T, W, H = r.left, r.top, r.width(), r.height()
     if W <= 0 or H <= 0:
-        return False, "窗口尺寸异常: " + title
-    user32.SetCursorPos(int(L + W * INPUT_RX), int(T + H * INPUT_RY))
-    time.sleep(_j(0.02, 0.05))
-    user32.mouse_event(2, 0, 0, 0, 0)
-    time.sleep(0.02)
-    user32.mouse_event(4, 0, 0, 0, 0)
-    time.sleep(_j(0.04, 0.08))
+        return False, "主窗口尺寸异常"
 
-    auto.SetClipboardText(text)
-    # waitTime=0：uiautomation 默认每次 SendKeys 后强等 0.5s（3 次白耗 1.6s），压掉
-    auto.SendKeys("{Ctrl}a{Del}", waitTime=0)
-    time.sleep(_j(0.01, 0.03))
-    auto.SendKeys("{Ctrl}v", waitTime=0)
-    time.sleep(_j(0.08, 0.13))   # 等文本落进输入框，太快会发空消息
-    auto.SendKeys("{Enter}", waitTime=0)
-    time.sleep(_j(0.06, 0.12))
+    prev_clip = _clip_get()
+    try:
+        # 1) Ctrl+F 呼出搜索，粘贴群名（打字注入逐字符标记多，粘贴只一次 Ctrl+V）
+        auto.SendKeys("{Ctrl}f", waitTime=0)
+        time.sleep(_j(0.25, 0.40))
+        auto.SetClipboardText(title)
+        auto.SendKeys("{Ctrl}a{Del}", waitTime=0)
+        time.sleep(_j(0.02, 0.04))
+        auto.SendKeys("{Ctrl}v", waitTime=0)
+        time.sleep(_j(0.60, 0.90))   # 等搜索结果出来
+        auto.SendKeys("{Enter}", waitTime=0)
+        time.sleep(_j(0.50, 0.75))   # 等会话打开
+        # 2) 点聊天输入框（主窗口含左侧栏，输入框偏右下）
+        user32.SetCursorPos(int(L + W * INPUT_RX), int(T + H * INPUT_RY))
+        time.sleep(_j(0.02, 0.05))
+        user32.mouse_event(2, 0, 0, 0, 0)
+        time.sleep(0.02)
+        user32.mouse_event(4, 0, 0, 0, 0)
+        time.sleep(_j(0.04, 0.08))
+        # 3) 清空残留 → 粘贴文案 → 回车发送
+        auto.SendKeys("{Ctrl}a{Del}", waitTime=0)
+        time.sleep(_j(0.01, 0.03))
+        auto.SetClipboardText(text)
+        auto.SendKeys("{Ctrl}v", waitTime=0)
+        time.sleep(_j(0.08, 0.13))   # 等文本落进输入框，太快会发空消息
+        auto.SendKeys("{Enter}", waitTime=0)
+        time.sleep(_j(0.06, 0.12))
+    finally:
+        _clip_put(prev_clip)   # 无论成败，把 Boss 的剪贴板还回去
+    # 焦点归还（失败不影响发送结果）
+    try:
+        if prev_fg and user32.IsWindow(prev_fg):
+            user32.SetForegroundWindow(prev_fg)
+    except Exception:
+        pass
     return True, "ok"
 
 
@@ -268,10 +302,6 @@ def _worker(log=print):
 
 
 def _worker_once(log=print):
-    # 隐身桌面外部 worker 接管时本线程休眠（企业微信整体搬到 WecomPush 隐藏桌面，
-    # 2026-10-15 Boss 明令「不影响我使用电脑」）；worker 停止后标记消失自动苏醒
-    if os.path.exists(FLAG_EXTERNAL) and os.environ.get("WEXT_WORKER") != "1":
-        return
     if not _STATE["enabled"] or not _STATE["groups"]:
         return
     if _STATE["max_per_day"] > 0 and _STATE["day_cnt"] >= _STATE["max_per_day"]:
