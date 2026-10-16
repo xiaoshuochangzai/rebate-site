@@ -212,18 +212,27 @@ pointer-events:none;z-index:99}
 #top{position:fixed;right:24px;bottom:34px;width:44px;height:44px;border-radius:50%;
 background:linear-gradient(90deg,#FF7D00,#FF0A00);color:#fff;border:0;font-size:20px;cursor:pointer;
 box-shadow:0 4px 14px rgba(255,45,0,.35);display:none;z-index:30}
-/* ---------- 双11红包轮播 banner（2026-10-16 Boss 明令） ---------- */
+/* ---------- 双11红包轮播 banner（2026-10-16 Boss 明令，加大+强化领取CTA） ---------- */
 .hb-banner{position:relative;overflow:hidden;max-width:1230px;margin:10px auto 0;padding:0 20px}
 @media(max-width:640px){.hb-banner{padding:0 10px;margin-top:8px}}
 .hb-track{display:flex;transition:transform .45s ease}
-.hb-slide{flex:0 0 100%;display:flex;align-items:center;gap:10px;height:62px;padding:0 18px;
-border-radius:12px;color:#fff;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent}
+.hb-slide{flex:0 0 100%;display:flex;align-items:center;gap:14px;height:92px;padding:0 24px;
+border-radius:14px;color:#fff;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;
+box-shadow:0 6px 18px rgba(255,60,0,.25)}
 .hb-jd{background:linear-gradient(90deg,#E12319,#FF6A00)}
 .hb-tb{background:linear-gradient(90deg,#FF5000,#FF8F1F)}
-.hb-tag{background:rgba(255,255,255,.22);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap}
-.hb-main{font-size:17px;font-weight:800;letter-spacing:.5px;white-space:nowrap}
-.hb-sub{margin-left:auto;font-size:12px;opacity:.92;white-space:nowrap}
-@media(max-width:640px){.hb-slide{height:54px;padding:0 14px}.hb-main{font-size:15px}}
+.hb-tag{background:rgba(255,255,255,.22);border-radius:9px;padding:4px 10px;font-size:13px;font-weight:700;white-space:nowrap}
+.hb-txt{display:flex;flex-direction:column;line-height:1.4}
+.hb-main{font-size:22px;font-weight:800;letter-spacing:.5px;white-space:nowrap}
+.hb-sub{font-size:13px;opacity:.94;white-space:nowrap}
+.hb-cta{margin-left:auto;background:#fff;border-radius:999px;padding:9px 20px;font-size:16px;font-weight:800;
+white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s ease-in-out infinite}
+.hb-jd .hb-cta{color:#E12319}
+.hb-tb .hb-cta{color:#FF5000}
+@keyframes hbPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+@media(max-width:640px){.hb-slide{height:76px;padding:0 16px;border-radius:12px}
+.hb-main{font-size:18px}.hb-sub{font-size:11px}.hb-tag{font-size:12px;padding:3px 8px}
+.hb-cta{padding:7px 14px;font-size:14px}}
 .hb-dots{position:absolute;right:28px;bottom:7px;display:flex;gap:5px;pointer-events:none}
 .hb-dot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.55)}
 .hb-dot.on{background:#fff}
@@ -235,13 +244,13 @@ border-radius:12px;color:#fff;cursor:pointer;user-select:none;-webkit-tap-highli
   <div class="hb-track" id="hbTrack">
     <a class="hb-slide hb-jd" href="javascript:;" id="hbJD">
       <span class="hb-tag">京东双11</span>
-      <span class="hb-main">京享红包 立即领取</span>
-      <span class="hb-sub">微信内直接领</span>
+      <span class="hb-txt"><span class="hb-main">京享红包 天天可领</span><span class="hb-sub">领了再下单，立省一笔</span></span>
+      <span class="hb-cta">立即领取</span>
     </a>
     <a class="hb-slide hb-tb" href="javascript:;" id="hbTB">
       <span class="hb-tag">淘宝双11</span>
-      <span class="hb-main">超级红包 限时加码</span>
-      <span class="hb-sub">点击跳转淘宝APP领取</span>
+      <span class="hb-txt"><span class="hb-main">超级红包 限时加码</span><span class="hb-sub">口令自动复制，打开淘宝即领</span></span>
+      <span class="hb-cta">去领取</span>
     </a>
   </div>
   <div class="hb-dots"><i class="hb-dot on"></i><i class="hb-dot"></i></div>
