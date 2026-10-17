@@ -51,6 +51,18 @@ TB_FOOTER_EVERY = 2      # 淘宝每 2 条带一次双11破价站链尾（Boss 2
 # ---- 23:27 夜闸（Boss 2026-10-16 明令：电脑 23:30 自动关机）----
 NIGHTGATE_HM = "23:27"   # 此刻起停发一切线报，改发一次收播公告；次日 0 点自动恢复
 NIGHT_MSG = "@所有人 今日劲爆低价线报都在下面网站，不要错过\nhttps://shengqian.cyou/"
+
+# ---- 双11红包场次播报（Boss 2026-10-17 明令）----
+# 数据源：好单库活动日历接口（message_text=官方原文文案，含时间点），每天自动刷新+快照兜底
+# 发送规则：京东「10点」场 10:59 发（Boss 指定）；其它带时间场次提前 1 分钟；无时间（全天型）默认 10:59；
+#          0 点场跳过（电脑 23:30 关机，前一天 23:59 守不了）。发出后全局静默 2 分钟不发线报。
+CAL_URL = "https://www.haodanku.com/ActivityApi/getCalandar?id=24"
+CAL_SNAPSHOT = os.path.join(BASE_DIR, "hd_calandar_snapshot.json")
+REDPACK_STATE = os.path.join(BASE_DIR, "redpack_state.json")
+REDPACK_JD_URL = "https://u.jd.com/FDFQoBI"
+REDPACK_TB_TAIL = "淘宝红包口令：77￥ HU926 6FiQTthHJE8￥（复制后打开淘宝APP自动弹出）\nhttps://m.tb.cn/h.jXgUEoC"
+REDPACK_MUTE_SEC = 120   # 文案发出后 2 分钟线报静默（Boss 明令）
+_RP_CACHE = {"cal": None}
 REDPACK_EVERY = 1        # 京东每 2 条带一次红包推广（Boss 2026-10-13 明令）
 REDPACK_URL = "https://u.jd.com/FrBoSd3"
 # 钩子按线报内容匹配（Boss 2026-10-13 明令：与线报文案相配，嵌入无违和）：
@@ -392,6 +404,155 @@ def _night_gate(log=print):
 night_tick = _night_gate   # 监控主循环每轮无条件调用的别名
 
 
+# ============ 双11红包场次播报 ============
+
+def _rp_load_state():
+    try:
+        return json.load(open(REDPACK_STATE, encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _rp_save_state(st):
+    try:
+        json.dump(st, open(REDPACK_STATE, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def redpack_mute():
+    """线报静默窗：红包文案发出后 2 分钟内 True（wecom_ext 也直接读文件用）。"""
+    try:
+        st = json.load(open(REDPACK_STATE, encoding="utf-8"))
+        return time.time() < float(st.get("mute_until", 0) or 0)
+    except Exception:
+        return False
+
+
+def _rp_fetch_calendar():
+    """抓好单库日历接口；失败读快照。每天首次 tick 刷新一次。"""
+    try:
+        req = urllib.request.Request(CAL_URL, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120",
+            "Referer": "https://www.haodanku.com/Activity/index?id=24",
+            "X-Requested-With": "XMLHttpRequest"})
+        with OPENER.open(req, timeout=15) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        if d.get("code") == 200 and (d.get("data") or {}).get("calendar"):
+            json.dump(d["data"], open(CAL_SNAPSHOT, "w", encoding="utf-8"), ensure_ascii=False)
+            return d["data"]
+    except Exception:
+        pass
+    try:
+        return json.load(open(CAL_SNAPSHOT, encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _rp_slot_from_text(mmdd, plat, text):
+    """单段官方文案 → N 个场次（一句文案可含多个时间点，如「10点/20点，准点加码」）。"""
+    t = text.strip().strip('！!。；;')
+    if not t:
+        return []
+    times = []
+    for m in re.finditer(r"(\d{1,2}):(\d{2})", t):    # 「20:00-20:15」型
+        times.append(int(m.group(1)))
+    for m in re.finditer(r"(\d{1,2})点", t):          # 「10点」「20点」「10点-24点」型
+        times.append(int(m.group(1)))
+    if not times:
+        return [("10:59", mmdd, plat, t)]             # 全天型默认 10:59
+    out, seen = [], set()
+    for hh in times:
+        if hh in seen:
+            continue
+        seen.add(hh)
+        if hh == 0 or hh >= 23:
+            continue   # 0点/23点后：电脑 23:30 关机守不了，跳过
+        if plat == "jd" and hh == 10:
+            out.append(("10:59", mmdd, plat, t))      # Boss 指定：京东10点场 10:59 发
+        else:
+            out.append((f"{hh - 1:02d}:59", mmdd, plat, t))   # 其它场次提前1分钟
+    return out
+
+
+def _rp_parse_slots(data, today_str):
+    """日历 → 场次列表。只保留今天的场次（明天的不用天天算）。"""
+    if isinstance(data, dict) and "data" in data and "calendar" not in data:
+        data = data["data"]   # 快照可能存的是整个响应体，剥一层
+    slots, month = [], "10"
+    for x in data.get("calendar", []):
+        if x.get("type") == "month":
+            month = (x.get("date") or "10").replace("月", "") or "10"
+            continue
+        if x.get("type") != "day":
+            continue
+        day = str(x.get("date"))
+        try:
+            mmdd = today_str[5:] if day == "今" else f"{int(month):02d}-{int(day):02d}"
+        except Exception:
+            continue
+        msg = x.get("message_text") or ""
+        for tag, plat in (("【京东】", "jd"), ("【天猫】", "tb")):
+            if tag not in msg:
+                continue
+            for seg in msg.split("<br/>"):
+                if tag not in seg:
+                    continue
+                body = seg.split(tag, 1)[1]
+                for part in re.split(r"活动[①②③④]：", body):
+                    slots.extend(_rp_slot_from_text(mmdd, plat, part))
+    return slots
+
+
+def redpack_tick(log=print):
+    """监控主循环每轮调用：到点的红包场次发一次官方文案+平台红包入口，然后静默 2 分钟。"""
+    today = time.strftime("%Y-%m-%d")
+    st = _rp_load_state()
+    if st.get("cal_day") != today:
+        data = _rp_fetch_calendar()
+        if data:
+            st["cal_day"] = today
+            _rp_save_state(st)
+            _RP_CACHE["cal"] = data
+        else:
+            data = _RP_CACHE.get("cal")
+    else:
+        data = _RP_CACHE.get("cal")
+    if not data:
+        return
+    slots = [s for s in _rp_parse_slots(data, today) if s[1] == today[5:]]
+    if not slots:
+        return
+    now_hm = time.strftime("%H:%M")
+    fired = st.setdefault("fired", {})
+    for hhmm, mmdd, plat, text in slots:
+        if now_hm < hhmm:
+            continue   # 还没到点
+        key = f"{mmdd}:{plat}:{hhmm}"
+        if fired.get(key):
+            continue
+        # 错过太久（>15分钟）直接放弃，过期引导发了没意义
+        if (time.time() - time.mktime(time.strptime(f"{today} {hhmm}", "%Y-%m-%d %H:%M"))) > 900:
+            fired[key] = 1
+            _rp_save_state(st)
+            continue
+        if plat == "jd":
+            msg = "【京东】" + text + "\n京东红包入口：" + REDPACK_JD_URL
+        else:
+            msg = "【淘宝】" + text + "\n" + REDPACK_TB_TAIL
+        ok, info = _send(msg, log)
+        if ok:
+            fired[key] = 1
+            st["mute_until"] = time.time() + REDPACK_MUTE_SEC   # 发出后静默 2 分钟
+        elif now_hm <= hhmm:
+            pass   # 还在场次窗口内，下轮重试
+        else:
+            fired[key] = 1   # 超时且失败，放弃
+        _rp_save_state(st)
+        log(f"[红包场次] {mmdd} {hhmm} {plat} -> {'ok' if ok else 'fail:' + str(info)[:60]}")
+        time.sleep(0.4)
+
+
 def flush(deals, log=print):
     """推送本轮新线报（京东全推；淘宝需命中关键词）。deals=本轮新入库线报列表（时间倒序）。
     节流：先进 pending，攒够 MAX_PER_ROUND 条 或 距上次推送超过 min_interval 秒才发；
@@ -418,6 +579,10 @@ def flush(deals, log=print):
             pending.append(d)
             pending_ids.add(did)
     if not pending:
+        return 0
+    # 红包文案静默窗（Boss 2026-10-17 明令）：发出后 2 分钟不发线报；新线报照常入队，静默结束补发
+    if redpack_mute():
+        _save_pending(pending)
         return 0
     min_iv = int(_STATE.get("min_interval") or MIN_PUSH_INTERVAL)
     now = time.time()

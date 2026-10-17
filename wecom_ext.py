@@ -271,6 +271,15 @@ def _worker_once(log=print):
         return
     if _STATE["max_per_day"] > 0 and _STATE["day_cnt"] >= _STATE["max_per_day"]:
         return
+    # 红包文案静默窗（Boss 2026-10-17 明令）：keyword_push 发完红包场次后 2 分钟内不发线报
+    try:
+        import json as _json
+        _rs = _json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                           "redpack_state.json"), encoding="utf-8"))
+        if time.time() < float(_rs.get("mute_until", 0) or 0):
+            return
+    except Exception:
+        pass
     e = _peek()
     if not e:
         return

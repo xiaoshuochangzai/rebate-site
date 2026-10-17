@@ -731,6 +731,11 @@ def main():
                 keyword_push.night_tick(log=log)
             except Exception as e:
                 log(f"夜闸检查异常：{str(e)[:80]}")
+            # 双11红包场次播报（Boss 2026-10-17 明令）：同样每轮无条件查，到点发官方文案+静默2分钟
+            try:
+                keyword_push.redpack_tick(log=log)
+            except Exception as e:
+                log(f"红包场次检查异常：{str(e)[:80]}")
             # 每 20 轮（约 10 分钟）打一次推送通道状态，方便排查
             _ROUND[0] += 1
             if _ROUND[0] % 20 == 0 or _ROUND[0] == 1:
