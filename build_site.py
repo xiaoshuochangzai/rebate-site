@@ -26,9 +26,9 @@ HEADERS = {
     "Referer": "https://www.haodanku.com/activity/tip_off",
     "X-Requested-With": "XMLHttpRequest",
 }
-PLATFORM_MAP = {"1": "淘宝", "2": "京东", "3": "飞猪"}
-# 现阶段只上京东线报；以后要恢复淘宝/飞猪，改成 {"1", "2", "3"} 或设为空集合即可
-ONLY_PLATFORMS = {"1", "2"}
+PLATFORM_MAP = {"1": "淘宝", "2": "京东", "3": "飞猪", "4": "拼多多"}
+# 现阶段上京东+淘宝+拼多多；以后要恢复飞猪，加回 "3" 即可
+ONLY_PLATFORMS = {"1", "2", "4"}
 
 
 def fetch_page(cfg, page_no, timeout=12):
@@ -175,7 +175,7 @@ justify-content:space-between;align-items:center;border-top:1px solid #F0F1F4}
 .attr{display:flex;align-items:center;gap:6px}
 .pf{width:20px;height:20px;border-radius:3px;font-size:11px;color:#fff;font-weight:600;
 display:flex;align-items:center;justify-content:center}
-.pf.jd{background:var(--jd)}.pf.tb{background:var(--tb)}.pf.fz{background:var(--fz)}.pf.ot{background:#a6abb3}
+.pf.jd{background:var(--jd)}.pf.tb{background:var(--tb)}.pf.fz{background:var(--fz)}.pf.pdd{background:#e02e24}.pf.ot{background:#a6abb3}
 .reltime{color:#9aa0a8;font-size:12px;margin-left:2px}
 
 /* 淘宝卡：左内容右图片（学大淘客排版，有几张图用几张） */
@@ -381,8 +381,8 @@ const RE = /(https?:\\/\\/[^\\s<>"'，。；、）】]+)/g;
 function linkify(s){
   return esc(s).replace(RE, m=>'<a href="'+m+'" target="_blank" rel="noopener">'+m+'</a>');
 }
-function pfCls(p){return p==='2'?'jd':(p==='1'?'tb':(p==='3'?'fz':'ot'));}
-function pfTxt(p){return p==='2'?'JD':(p==='1'?'TB':(p==='3'?'FZ':'?'));}
+function pfCls(p){return p==='2'?'jd':(p==='1'?'tb':(p==='3'?'fz':(p==='4'?'pdd':'ot')));}
+function pfTxt(p){return p==='2'?'JD':(p==='1'?'TB':(p==='3'?'FZ':(p==='4'?'PDD':'?')));}
 
 function pickLink(it){
   const raw = (it.item_id||'').trim();
@@ -610,9 +610,9 @@ window.addEventListener('scroll', ()=>{
 });
 topBtn.onclick = ()=>window.scrollTo({top:0,behavior:'smooth'});
 
-// 平台筛选：京东第一、淘宝第二，不要「全部」分类
-const PNAME = {'1':'淘宝','2':'京东','3':'飞猪'};
-const PORDER = ['2','1'];
+// 平台筛选：京东第一、淘宝第二、拼多多第三，不要「全部」分类
+const PNAME = {'1':'淘宝','2':'京东','3':'飞猪','4':'拼多多'};
+const PORDER = ['2','1','4'];
 function buildTabs(){
   const seen = {};
   DEALS.forEach(d=>{ if(d.platform) seen[d.platform]=1; });

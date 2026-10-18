@@ -74,6 +74,20 @@ def _bitui_seen_save():
     save_json(BITUI_SEEN_FILE, sorted(_bitui_seen())[-3000:])
 
 
+_PDD_STATE = {"seen": None}
+_PDD_COOLDOWN = {"until": 0.0}  # 转链白名单未过审时的冷却截止（epoch 秒，进程内存态）
+
+
+def _pdd_seen():
+    if _PDD_STATE["seen"] is None:
+        _PDD_STATE["seen"] = set(load_json(PDD_SEEN_FILE, []))
+    return _PDD_STATE["seen"]
+
+
+def _pdd_seen_save():
+    save_json(PDD_SEEN_FILE, sorted(_pdd_seen())[-3000:])
+
+
 def _tb_inflight_add(k):
     with _TB_LOCK:
         if k in _TB_INFLIGHT:
@@ -93,6 +107,7 @@ def _tb_worker():
     会因 seen 未标而重复入队，造成同一条转 2~3 遍重复上站（2026-10-13 实锤踩坑）。"""
     import dtk_bitui
     import dtk_convert
+    import pdd_hdk
     while True:
         kind, payload = TB_JOBS.get()
         ok_flag = False
@@ -105,6 +120,18 @@ def _tb_worker():
                     ok_flag = True
                 else:
                     log(f"淘宝后台转链失败 {k}，本轮放弃（不上站，页面池内期间可重试）")
+            elif kind == "pdd":
+                k = str(payload.get("goods_id") or payload.get("goods_sign") or "")
+                try:
+                    link = pdd_hdk.convert_item(payload.get("goods_sign") or "")
+                    if link:
+                        TB_DONE.put(("pdd", payload, link))
+                        ok_flag = True
+                    else:
+                        log(f"拼多多 {k} 后台转链空链，下轮重试")
+                except pdd_hdk.WhitelistError as we:
+                    _PDD_COOLDOWN["until"] = time.time() + PDD_COOLDOWN_SEC
+                    log(f"拼多多转链未过审（白名单），冷却 1 小时后自动重试：{we}")
             else:
                 k = str(payload.get("id") or "")
                 conv = dtk_bitui.convert_item(payload)
@@ -122,6 +149,8 @@ def _tb_worker():
                         _tb_inflight_discard(dtk_convert.to_deal(payload, None)["id"])
                     except Exception:
                         pass
+                elif kind == "pdd":
+                    _tb_inflight_discard(str(payload.get("goods_id") or payload.get("goods_sign") or ""))
                 else:
                     _tb_inflight_discard(str(payload.get("id") or ""))
             TB_JOBS.task_done()
@@ -135,10 +164,11 @@ def start_tb_worker():
 
 
 def drain_tb_done(deals, have_ids):
-    """主线程收后台转链成品：入库/进推送队列（保持主线程单写者）。返回 (tip数, bitui数)。"""
+    """主线程收后台转链成品：入库/进推送队列（保持主线程单写者）。返回 (tip数, bitui数, pdd数)。"""
     import dtk_bitui
     import dtk_convert
-    n_tip = n_bit = 0
+    import pdd_hdk
+    n_tip = n_bit = n_pdd = 0
     while True:
         try:
             kind, payload, out = TB_DONE.get_nowait()
@@ -163,6 +193,24 @@ def drain_tb_done(deals, have_ids):
             finally:
                 _tb_inflight_discard(k)
                 _dtk_seen_save()
+        elif kind == "pdd":
+            gid = str(payload.get("goods_id") or payload.get("goods_sign") or "")
+            try:
+                if out:
+                    deal = pdd_hdk.to_deal(payload, out)
+                    deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    deals.insert(0, deal)
+                    have_ids.add(str(deal["id"]))
+                    _pdd_seen().add(gid)
+                    _pdd_seen_save()
+                    n_pdd += 1
+                    log(f"拼多多已转链落盘 pdd_{gid} | {str(payload.get('goodsname') or '')[:24]}")
+                else:
+                    log(f"拼多多 {gid} 成品空链，下轮重试")
+            except Exception as e:
+                log(f"拼多多成品处理异常 {gid}：{str(e)[:80]}")
+            finally:
+                _tb_inflight_discard(gid)
         else:
             gid = str(payload.get("id") or "")
             try:
@@ -183,10 +231,10 @@ def drain_tb_done(deals, have_ids):
                 log(f"三榜成品处理异常 {gid}：{str(e)[:80]}")
             finally:
                 _tb_inflight_discard(gid)
-    if n_tip:
+    if n_tip or n_pdd:
         persist(deals)
-        mark_dirty(f"tb tip x{n_tip}")
-    return n_tip, n_bit
+        mark_dirty(f"tb tip x{n_tip}" if not n_pdd else f"pdd x{n_pdd}")
+    return n_tip, n_bit, n_pdd
 
 # pythonw（无窗口）拉起子进程时，Windows 默认会给他弹一个黑色控制台窗口。
 # 监控里 git 兜底推送 / powershell 杀浏览器都会被 Boss 看到「凭空弹窗」，
@@ -215,6 +263,9 @@ DTK_SEEN_FILE = os.path.join(BASE_DIR, "seen_dtk.json")
 DTK_PENDING_FILE = os.path.join(BASE_DIR, "pending_dtk.json")
 BITUI_SEEN_FILE = os.path.join(BASE_DIR, "seen_bitui.json")  # 必推榜已见商品 id（Boss 2026-09-16：只推新进榜）
 BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
+PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id（首跑建基线全跳过）
+PDD_MAX_PER_ROUND = 2  # 单轮最多转链几条拼多多新品（好单库 2000/分钟，轻用即可）
+PDD_COOLDOWN_SEC = 3600  # 转链未过审（白名单）冷却 1 小时，过审后自动恢复，无需重启监控
 LOCK_FILE = os.path.join(BASE_DIR, "monitor.lock")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
 DEBOUNCE = 20  # 防抖窗口：KV 直写便宜又即时，20s 内的变更合并成一次写
@@ -432,6 +483,44 @@ def poll_bitui():
             log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]}新品 {gid} | {it.get('d_title', '')[:26]}（已排入后台转链）")
         if got >= BITUI_MAX_PER_ROUND:
             break
+    return got
+
+
+def poll_pdd(deals, have_ids):
+    """好单库拼多多新品监听（2026-10-18 接入，Boss 提供 apikey + 多多进宝 pid）。
+
+    新商品（goods_id 没见过）→ 后台转链（get_pdditems_link）→ 成品入站第三 tab。
+    首次运行建基线：现页商品全部记 seen 跳过，防一次性轰炸。
+    转链未过审（白名单）自动冷却 1 小时，过审后自愈，无需重启监控。
+    红线：没转上链的绝不上站（与京东/淘宝同规矩）。只上站，不进企微推送。
+    """
+    if time.time() < _PDD_COOLDOWN["until"]:
+        return 0
+    import pdd_hdk
+    seen = _pdd_seen()
+    items = pdd_hdk.fetch_items()
+    if not items:
+        return 0
+    if not seen:
+        for it in items:
+            gid = str(it.get("goods_id") or "")
+            if gid:
+                seen.add(gid)
+        _pdd_seen_save()
+        log(f"拼多多基线已建立：现页 {len(items)} 条全部跳过，只收之后新出的")
+        return 0
+    got = 0
+    for it in items:
+        if got >= PDD_MAX_PER_ROUND:
+            break
+        gid = str(it.get("goods_id") or "")
+        if not gid or gid in seen or gid in have_ids or ("pdd_" + gid) in have_ids:
+            continue
+        if not _tb_inflight_add(gid):
+            continue  # 已在后台转链中，防重复入队
+        TB_JOBS.put(("pdd", it))
+        got += 1
+        log(f"拼多多新品 {gid} | {str(it.get('goodsname') or '')[:26]}（已排入后台转链）")
     return got
 
 
@@ -710,9 +799,15 @@ def main():
             except Exception as e:
                 log(f"必推榜轮询异常：{str(e)[:100]}")
 
+            # 好单库拼多多新品（2026-10-18 接入：新商品转链后上站第三 tab）
+            try:
+                poll_pdd(deals, have_ids)
+            except Exception as e:
+                log(f"拼多多轮询异常：{str(e)[:100]}")
+
             # 收淘宝后台转链成品（入库/进推送队列；主线程单写者纪律）
             try:
-                n_tip, n_bit = drain_tb_done(deals, have_ids)
+                n_tip, n_bit, n_pdd = drain_tb_done(deals, have_ids)
                 if n_bit:
                     mark_dirty(f"bitui x{n_bit}")
             except Exception as e:
