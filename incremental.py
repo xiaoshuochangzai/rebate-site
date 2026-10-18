@@ -263,9 +263,10 @@ DTK_SEEN_FILE = os.path.join(BASE_DIR, "seen_dtk.json")
 DTK_PENDING_FILE = os.path.join(BASE_DIR, "pending_dtk.json")
 BITUI_SEEN_FILE = os.path.join(BASE_DIR, "seen_bitui.json")  # 必推榜已见商品 id（Boss 2026-09-16：只推新进榜）
 BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
-PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id（首跑建基线全跳过）
-PDD_MAX_PER_ROUND = 2  # 单轮最多转链几条拼多多新品（好单库 2000/分钟，轻用即可）
-PDD_COOLDOWN_SEC = 3600  # 转链未过审（白名单）冷却 1 小时，过审后自动恢复，无需重启监控
+PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id
+PDD_MAX_PER_ROUND = 3  # 单轮最多转链几条拼多多新品
+PDD_POLL_PAGES = 3     # 每轮轮询商品列表前几页 + 热榜三榜（约 40 条源/轮）
+PDD_COOLDOWN_SEC = 3600  # 转链权限类报错冷却 1 小时，恢复后自动重试，无需重启监控
 LOCK_FILE = os.path.join(BASE_DIR, "monitor.lock")
 STATE = {"ok": 0, "fail": 0, "skipped": 0}
 DEBOUNCE = 20  # 防抖窗口：KV 直写便宜又即时，20s 内的变更合并成一次写
@@ -500,7 +501,7 @@ def poll_pdd(deals, have_ids):
         return 0
     import pdd_hdk
     seen = _pdd_seen()
-    items = pdd_hdk.fetch_items()
+    items = pdd_hdk.collect_supply(pages=PDD_POLL_PAGES)
     if not items:
         return 0
     got = 0

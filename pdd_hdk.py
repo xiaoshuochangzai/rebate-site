@@ -41,7 +41,7 @@ def _get(url, timeout=12):
 
 
 def fetch_items(page=1):
-    """有券商品列表，一页 10 条。返回 list[dict]，失败返回 []。"""
+    """有券商品列表，一页 10 条（实测翻到 25 页仍有货，供给充足）。返回 list[dict]，失败返回 []。"""
     url = (f"https://v2.api.haodanku.com/get_pdd_itemlist"
            f"?apikey={APIKEY}&is_coupon=1&min_id={page}")
     try:
@@ -52,6 +52,47 @@ def fetch_items(page=1):
     except Exception:
         pass
     return []
+
+
+def fetch_rank(types=(1, 2, 3)):
+    """实时热榜（Boss 提供的 pdd_hot_rank，文档 id=53）。
+    type: 1 今日热销榜 / 2 实时热销榜 / 3 实时收益榜。返回合并去重后的 list[dict]。"""
+    out, seen = [], set()
+    for t in types:
+        url = (f"https://v2.api.haodanku.com/pdd_hot_rank"
+               f"?apikey={APIKEY}&min_id=1&cid=0&type={t}")
+        try:
+            d = _get(url)
+            arr = d.get("data")
+            if d.get("code") == 200 and isinstance(arr, list):
+                for it in arr:
+                    gid = str(it.get("goods_id") or "")
+                    if gid and gid not in seen:
+                        it["_rank"] = t
+                        out.append(it)
+                        seen.add(gid)
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return out
+
+
+def collect_supply(pages=15):
+    """聚合供给源：商品列表前 N 页 + 实时热榜三榜，按 goods_id 去重。"""
+    out, seen = [], set()
+    for p in range(1, pages + 1):
+        for it in fetch_items(p):
+            gid = str(it.get("goods_id") or "")
+            if gid and gid not in seen:
+                out.append(it)
+                seen.add(gid)
+        time.sleep(0.3)
+    for it in fetch_rank():
+        gid = str(it.get("goods_id") or "")
+        if gid and gid not in seen:
+            out.append(it)
+            seen.add(gid)
+    return out
 
 
 def convert_item(goods_sign):
