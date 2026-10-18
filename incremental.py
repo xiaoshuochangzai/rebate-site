@@ -487,11 +487,13 @@ def poll_bitui():
 
 
 def poll_pdd(deals, have_ids):
-    """好单库拼多多新品监听（2026-10-18 接入，Boss 提供 apikey + 多多进宝 pid）。
+    """好单库拼多多新品监听（2026-10-18 接入，Boss 提供 apikey）。
 
-    新商品（goods_id 没见过）→ 后台转链（get_pdditems_link）→ 成品入站第三 tab。
-    首次运行建基线：现页商品全部记 seen 跳过，防一次性轰炸。
-    转链未过审（白名单）自动冷却 1 小时，过审后自愈，无需重启监控。
+    新商品（goods_id 没见过）→ 后台转链（v3 unify_pdditems_link）→ 成品入站第三 tab。
+    首跑**不建基线**：拼多多只上站、不进企微推送（Boss 2026-10-18 明令），没有炸群
+    风险，首跑现页商品直接转链上站当种子内容（照搬淘宝必推榜的基线逻辑会让站上
+    拼多多 tab 一直空窗——2026-10-18 实锤踩坑）。
+    转链权限类报错自动冷却 1 小时，恢复后自愈，无需重启监控。
     红线：没转上链的绝不上站（与京东/淘宝同规矩）。只上站，不进企微推送。
     """
     if time.time() < _PDD_COOLDOWN["until"]:
@@ -500,14 +502,6 @@ def poll_pdd(deals, have_ids):
     seen = _pdd_seen()
     items = pdd_hdk.fetch_items()
     if not items:
-        return 0
-    if not seen:
-        for it in items:
-            gid = str(it.get("goods_id") or "")
-            if gid:
-                seen.add(gid)
-        _pdd_seen_save()
-        log(f"拼多多基线已建立：现页 {len(items)} 条全部跳过，只收之后新出的")
         return 0
     got = 0
     for it in items:
