@@ -2,9 +2,13 @@
 """好单库拼多多商品模块（2026-10-18 接入）。
 
 数据源：get_pdd_itemlist（有券商品列表，免登录、apikey 直调，实测 10 条/页字段齐全）
-转链：get_pdditems_link（apikey + pid + goods_sign → 推广短链）
-  —— 转链需应用白名单（openapi/api_apply 申请）。未过审时本模块抛 WhitelistError，
-  监控侧自动进 1 小时冷却（冷却期不抓不转），过审后下一轮自愈，无需重启监控。
+转链：v3.api.haodanku.com/unify_pdditems_link（拼多多商品转链·官方高佣账号版）
+  —— POST form-data，必填 apikey + itemid(=goods_sign)，实测 2026-10-18 直调即通
+  （code 200，返回 short_url https://p.pinduoduo.com/xxx）。
+  走好单库官方高佣通道，**不需要也没用 Boss 的多多进宝 pid**（旧 v2 get_pdditems_link
+  才是「未在白名单内」，官方文档包明确推荐 v3，接口文档 id=186）。
+  佣金经好单库绑定的多多进宝账号结算，订单走「拼多多订单拉取」接口。
+  失败仍保留 WhitelistError 兜底（监控冷却 1h 自愈），但正常情况下用不到。
 
 红线：没转上链的绝不上站（与京东/淘宝同规矩）。
 """
@@ -13,10 +17,10 @@ import os
 import re
 import time
 import urllib.request
+import urllib.parse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APIKEY = "9AC3C71D776A"          # 好单库开放平台（Boss 提供，应用 0 级：10万/天、2000/分钟）
-PID = "37475613_267806823"       # 多多进宝推广位（Boss 提供）
 
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -51,35 +55,26 @@ def fetch_items(page=1):
 
 
 def convert_item(goods_sign):
-    """转推广链。成功返回短链字符串；未过审抛 WhitelistError；其它失败返回 ''。"""
-    url = (f"https://v2.api.haodanku.com/get_pdditems_link"
-           f"?apikey={APIKEY}&pid={PID}&goods_sign={goods_sign}")
+    """v3 转推广链（官方高佣账号版）。成功返回 short_url（无则退 url）；
+    权限类报错抛 WhitelistError；其它失败返回 ''。"""
+    url = "https://v3.api.haodanku.com/unify_pdditems_link"
+    form = urllib.parse.urlencode({"apikey": APIKEY, "itemid": goods_sign}).encode("utf-8")
+    req = urllib.request.Request(url, data=form, headers=HEADERS, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
-        d = _get(url)
+        with urllib.request.urlopen(req, timeout=12) as r:
+            d = json.loads(r.read().decode("utf-8"))
     except Exception:
         return ""
     msg = str(d.get("msg") or "")
-    if d.get("code") not in (200, 0) or msg and ("白名单" in msg):
-        raise WhitelistError(msg[:80])
-    # 返回结构过审后才能确认：防御式取响应里第一个 http 链接（递归找）
-    found = []
-
-    def dig(o):
-        if len(found) >= 1:
-            return
-        if isinstance(o, str):
-            m = HTTP_URL_RE.search(o)
-            if m:
-                found.append(m.group(0))
-        elif isinstance(o, dict):
-            for v in o.values():
-                dig(v)
-        elif isinstance(o, list):
-            for v in o:
-                dig(v)
-
-    dig(d)
-    return found[0] if found else ""
+    if d.get("code") != 200:
+        if "白名单" in msg or "权限" in msg:
+            raise WhitelistError(msg[:80])
+        return ""
+    data = d.get("data") or {}
+    if not isinstance(data, dict):
+        return ""
+    return (data.get("short_url") or data.get("url") or "").strip()
 
 
 def to_deal(it, link):
