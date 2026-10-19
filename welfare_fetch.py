@@ -36,6 +36,7 @@ def conv(it):
             return ""
     link = (it.get("couponurl") or "").strip()
     return {
+        "itemid": it.get("itemid") or "",
         "t": it.get("itemshorttitle") or it.get("itemtitle") or "",
         "pic": (it.get("itempic") or "").split("_310x310")[0] + "_400x400.jpg" if it.get("itempic") else "",
         "price": _p("itemprice"),
