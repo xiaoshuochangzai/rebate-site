@@ -132,6 +132,8 @@ box-shadow:0 4px 12px rgba(60,75,238,.28)}
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .wf-coupon{display:inline-block;font-size:12px;color:#E12319;border:1px solid #FFC9C4;
 background:#FFF7F6;border-radius:4px;padding:1px 8px}
+.wf-tpwd{font-size:12px;color:#8a909c;margin-top:5px;cursor:pointer;user-select:all}
+.wf-tpwd:hover{color:var(--brand)}
 /* 福利行式布局（学好单库聚合页：图+标题+领券省X元+到手价划线原价+去抢购） */
 #list.wflist{display:block;max-width:860px;margin:0 auto}
 .wf-row{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;
@@ -576,11 +578,12 @@ function wfCard(it){
   const price = it.end || it.price || '';
   const old = (it.price && it.end && it.price > it.end) ? '<s>¥'+esc(it.price)+'</s>' : '';
   const coupon = it.coupon ? '<span class="wf-coupon">领券省'+esc(it.coupon)+'元</span>' : '';
+  const tpwd = it.tpwd ? '<div class="wf-tpwd" data-tpwd="'+esc(it.tpwd)+'" title="点击复制淘口令">口令 '+esc(it.tpwd)+'</div>' : '';
   const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">' : '';
   const link = esc(it.link);
   return '<div class="wf-row">'
     + '<a class="wf-thumb" href="'+link+'" target="_blank" rel="noopener">'+img+'</a>'
-    + '<div class="wf-mid"><div class="wf-title">'+esc(it.t)+'</div>'+coupon+'</div>'
+    + '<div class="wf-mid"><div class="wf-title">'+esc(it.t)+'</div>'+coupon+tpwd+'</div>'
     + '<div class="wf-right">'
     +   '<div class="wf-price"><i>到手价</i>¥'+esc(price)+old+'</div>'
     +   '<a class="wf-btn" href="'+link+'" target="_blank" rel="noopener">去抢购</a>'
@@ -666,6 +669,13 @@ listEl.addEventListener('dblclick', e=>{
 });
 // 底角【复制文案】（淘宝卡）：复制完整成品文案，与双击卡片等效
 listEl.addEventListener('click', e=>{
+  // 福利卡口令：点击复制淘口令
+  const tp = e.target.closest('.wf-tpwd');
+  if(tp){
+    e.stopPropagation(); e.preventDefault();
+    copy(tp.dataset.tpwd || '', '口令已复制，打开淘宝App粘贴 ✓');
+    return;
+  }
   const c = e.target.closest('.cpylink');
   if(c){
     e.stopPropagation(); e.preventDefault();
