@@ -34,3 +34,10 @@ jp_cookie.json
 jp_login_lost.txt
 keyword_state.json
 keyword_pending.json
+
+# temp artifacts
+snap_deals.json
+kv_deals_tmp.json
+welfare_probe.json
+welfare_probe_out.txt
+build_out.txt

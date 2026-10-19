@@ -120,6 +120,19 @@ border-radius:999px;background:var(--brand);color:#fff;font-size:13px;font-weigh
 transition:.18s}
 .srch .sbtn:hover{background:#2f3ddb;box-shadow:0 3px 10px rgba(60,75,238,.3)}
 @media(max-width:780px){.srch{margin-left:0;width:100%}.srch input{width:100%}}
+/* ---------- 双11福利清单子标签（仅点「双11福利清单」tab 时显示） ---------- */
+.wfwrap{display:none;flex-wrap:wrap;gap:10px;margin:14px 0 4px;background:#fff;
+padding:12px 18px;border:1px solid #EBEFF7;border-radius:14px;box-shadow:0 2px 10px rgba(17,55,178,.05)}
+.wfwrap span{font-size:14px;color:#5a6270;cursor:pointer;padding:7px 20px;border-radius:999px;
+border:1px solid #E3E8F2;background:#fff;transition:.18s;user-select:none;white-space:nowrap}
+.wfwrap span:hover{color:var(--brand);border-color:#B9C6F2;background:#F5F8FF}
+.wfwrap span.active{background:var(--brand);color:#fff;font-weight:600;border-color:var(--brand);
+box-shadow:0 4px 12px rgba(60,75,238,.28)}
+.wf-title{font-size:15px;font-weight:600;color:#222;line-height:1.45;margin-bottom:6px}
+.wf-coupon{display:inline-block;font-size:12px;color:#E12319;border:1px solid #FFC9C4;
+background:#FFF7F6;border-radius:4px;padding:1px 8px;margin-bottom:6px}
+.wf-sale{color:#9aa0a8;font-size:12px;margin-left:8px}
+
 /* ---------- 实时状态条 ---------- */
 .rtbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;
 margin:14px 0 4px;padding:13px 18px;border:1px solid #EBEFF7;border-radius:14px;
@@ -323,6 +336,8 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
       </div>
     </div>
   </div>
+
+  <div class="wfwrap" id="welfareBar" style="display:none"></div>
 
   <div class="rtbar">
     <span class="rt-live"><i class="rt-dot"></i>实时更新</span>
@@ -528,6 +543,7 @@ function matched(){
 }
 let cur = [];
 function render(reset){
+  if(filter === 'welfare'){ renderWelfare(); return; }  // 福利专区由 renderWelfare 接管
   const list = document.getElementById('list');
   if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
   document.getElementById('cnt').textContent = cur.length;
@@ -538,6 +554,61 @@ function render(reset){
   shown += slice.length;
   document.getElementById('more').style.display = shown < cur.length ? 'block' : 'none';
 }
+
+// ---------- 双11福利清单专区（独立数据 welfare.json；7 个子标签仅点该 tab 时出现） ----------
+let WELFARE = null, wfCat = '';
+function wfCard(it){
+  const price = it.end || it.price || '';
+  const old = (it.price && it.end && it.price > it.end) ? '<s>¥'+esc(it.price)+'</s>' : '';
+  const coupon = it.coupon ? '<div class="wf-coupon">券 '+esc(it.coupon)+'元</div>' : '';
+  const sale = it.sale ? '<span class="wf-sale">已售'+esc(it.sale)+'</span>' : '';
+  const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">'
+    : '<div class="noimg">暂无图片</div>';
+  return '<div class="report-item">'
+    + '<div class="image-section">'+img+'</div>'
+    + '<div class="content-section"><div class="content-section-item">'
+    +   '<div class="content-box">'
+    +     '<div class="ct wf-title">'+esc(it.t)+'</div>'
+    +     '<div class="price"><i>到手 ¥</i>'+esc(price)+old+'</div>'
+    +     coupon
+    +     '<a class="lnk" href="'+esc(it.link)+'" target="_blank" rel="noopener">'+esc(it.link)+'</a>'
+    +     sale
+    +   '</div>'
+    + '</div></div></div>';
+}
+function renderWfList(){
+  const cats = (WELFARE && WELFARE.cats) || [];
+  if(!cats.length) return;
+  let cat = cats.find(c=>c.id===wfCat);
+  if(!cat){ wfCat = cats[0].id; cat = cats[0]; }
+  document.querySelectorAll('#welfareBar span').forEach(x=>
+    x.classList.toggle('active', x.dataset.c === wfCat));
+  const list = document.getElementById('list');
+  list.innerHTML = cat.items.map(wfCard).join('');
+  document.getElementById('cnt').textContent = cat.items.length;
+  document.getElementById('total').textContent = DEALS.length;
+  document.getElementById('more').style.display = 'none';
+  document.getElementById('empty').style.display = 'none';
+}
+function renderWelfare(){
+  document.getElementById('welfareBar').style.display = 'flex';  // 点开才显示子标签
+  if(WELFARE){ renderWfList(); return; }
+  document.getElementById('list').innerHTML = '';
+  fetch('welfare.json?ts='+Date.now(), {cache:'no-store'})
+    .then(r=>{ if(!r.ok) throw 0; return r.json(); })
+    .then(j=>{
+      WELFARE = j;
+      document.getElementById('welfareBar').innerHTML = (WELFARE.cats||[]).map(c=>
+        '<span data-c="'+esc(c.id)+'">'+esc(c.name)+'</span>').join('');
+      renderWfList();
+    })
+    .catch(()=>{ document.getElementById('list').innerHTML =
+      '<div class="empty">福利清单加载失败，请点「刷新」重试</div>'; });
+}
+document.getElementById('welfareBar').addEventListener('click', e=>{
+  const sp = e.target.closest('span'); if(!sp) return;
+  wfCat = sp.dataset.c; renderWfList();
+});
 
 function toast(msg){
   const t = document.getElementById('toast');
@@ -561,6 +632,8 @@ document.getElementById('plat').addEventListener('click', e=>{
   const li = e.target.closest('li'); if(!li || li.classList.contains('active')) return;
   document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
   li.classList.add('active'); filter = li.dataset.p;
+  if(filter === 'welfare'){ renderWelfare(); return; }  // 双11福利清单：独立专区，不拉线报
+  document.getElementById('welfareBar').style.display = 'none';  // 其它状况不显示子标签
   render(true);      // 先用现有数据立即渲染，避免白屏
   refreshData();     // 切换分类 = 刷新（拉最新数据重绘当前平台）
 });
@@ -618,8 +691,9 @@ function buildTabs(){
   DEALS.forEach(d=>{ if(d.platform) seen[d.platform]=1; });
   const arr = PORDER.filter(p=>seen[p]);
   Object.keys(seen).forEach(p=>{ if(arr.indexOf(p)<0) arr.push(p); });
+  arr.push('welfare');  // 双11福利清单：独立专区 tab，固定最后
   document.getElementById('plat').innerHTML = arr.map(p=>
-    '<li data-p="'+esc(p)+'"'+(p===String(filter)?' class="active"':'')+'>'+esc(PNAME[p]||p)+'</li>').join('');
+    '<li data-p="'+esc(p)+'"'+(p===String(filter)?' class="active"':'')+'>'+(p==='welfare'?'双11福利清单':esc(PNAME[p]||p))+'</li>').join('');
 }
 buildTabs();
 render(true);
