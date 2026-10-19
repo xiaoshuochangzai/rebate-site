@@ -128,10 +128,25 @@ border:1px solid #E3E8F2;background:#fff;transition:.18s;user-select:none;white-
 .wfwrap span:hover{color:var(--brand);border-color:#B9C6F2;background:#F5F8FF}
 .wfwrap span.active{background:var(--brand);color:#fff;font-weight:600;border-color:var(--brand);
 box-shadow:0 4px 12px rgba(60,75,238,.28)}
-.wf-title{font-size:15px;font-weight:600;color:#222;line-height:1.45;margin-bottom:6px}
+.wf-title{font-size:14px;font-weight:600;color:#222;line-height:1.45;margin-bottom:6px;
+display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .wf-coupon{display:inline-block;font-size:12px;color:#E12319;border:1px solid #FFC9C4;
-background:#FFF7F6;border-radius:4px;padding:1px 8px;margin-bottom:6px}
-.wf-sale{color:#9aa0a8;font-size:12px;margin-left:8px}
+background:#FFF7F6;border-radius:4px;padding:1px 8px}
+/* 福利行式布局（学好单库聚合页：图+标题+领券省X元+到手价划线原价+去抢购） */
+#list.wflist{display:block;max-width:860px;margin:0 auto}
+.wf-row{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;
+border:1px solid #EEF1F6;border-radius:12px;margin-bottom:10px;box-shadow:0 2px 8px rgba(17,55,178,.04)}
+.wf-thumb{width:72px;height:72px;flex-shrink:0;border-radius:8px;overflow:hidden;background:#f7f8fa}
+.wf-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.wf-mid{flex:1;min-width:0}
+.wf-right{flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.wf-price{color:#E12319;font-weight:800;font-size:20px;line-height:1.1;white-space:nowrap}
+.wf-price i{font-size:11px;font-style:normal;font-weight:600;margin-right:2px}
+.wf-price s{color:#9aa0a8;font-size:12px;font-weight:400;margin-left:5px}
+.wf-btn{display:inline-block;background:#1F8A44;color:#fff;font-size:13px;font-weight:600;
+padding:7px 18px;border-radius:999px;text-decoration:none;transition:.18s}
+.wf-btn:hover{background:#16693A}
+@media(max-width:520px){.wf-thumb{width:60px;height:60px}.wf-price{font-size:17px}.wf-btn{padding:6px 14px}}
 
 /* ---------- 实时状态条 ---------- */
 .rtbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;
@@ -560,21 +575,16 @@ let WELFARE = null, wfCat = '';
 function wfCard(it){
   const price = it.end || it.price || '';
   const old = (it.price && it.end && it.price > it.end) ? '<s>¥'+esc(it.price)+'</s>' : '';
-  const coupon = it.coupon ? '<div class="wf-coupon">券 '+esc(it.coupon)+'元</div>' : '';
-  const sale = it.sale ? '<span class="wf-sale">已售'+esc(it.sale)+'</span>' : '';
-  const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">'
-    : '<div class="noimg">暂无图片</div>';
-  return '<div class="report-item">'
-    + '<div class="image-section">'+img+'</div>'
-    + '<div class="content-section"><div class="content-section-item">'
-    +   '<div class="content-box">'
-    +     '<div class="ct wf-title">'+esc(it.t)+'</div>'
-    +     '<div class="price"><i>到手 ¥</i>'+esc(price)+old+'</div>'
-    +     coupon
-    +     '<a class="lnk" href="'+esc(it.link)+'" target="_blank" rel="noopener">'+esc(it.link)+'</a>'
-    +     sale
-    +   '</div>'
-    + '</div></div></div>';
+  const coupon = it.coupon ? '<span class="wf-coupon">领券省'+esc(it.coupon)+'元</span>' : '';
+  const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">' : '';
+  const link = esc(it.link);
+  return '<div class="wf-row">'
+    + '<a class="wf-thumb" href="'+link+'" target="_blank" rel="noopener">'+img+'</a>'
+    + '<div class="wf-mid"><div class="wf-title">'+esc(it.t)+'</div>'+coupon+'</div>'
+    + '<div class="wf-right">'
+    +   '<div class="wf-price"><i>到手价</i>¥'+esc(price)+old+'</div>'
+    +   '<a class="wf-btn" href="'+link+'" target="_blank" rel="noopener">去抢购</a>'
+    + '</div></div>';
 }
 function renderWfList(){
   const cats = (WELFARE && WELFARE.cats) || [];
@@ -592,6 +602,7 @@ function renderWfList(){
 }
 function renderWelfare(){
   document.getElementById('welfareBar').style.display = 'flex';  // 点开才显示子标签
+  document.getElementById('list').classList.add('wflist');       // 行式布局（学聚合页）
   if(WELFARE){ renderWfList(); return; }
   document.getElementById('list').innerHTML = '';
   fetch('welfare.json?ts='+Date.now(), {cache:'no-store'})
@@ -634,6 +645,7 @@ document.getElementById('plat').addEventListener('click', e=>{
   li.classList.add('active'); filter = li.dataset.p;
   if(filter === 'welfare'){ renderWelfare(); return; }  // 双11福利清单：独立专区，不拉线报
   document.getElementById('welfareBar').style.display = 'none';  // 其它状况不显示子标签
+  document.getElementById('list').classList.remove('wflist');    // 恢复线报网格
   render(true);      // 先用现有数据立即渲染，避免白屏
   refreshData();     // 切换分类 = 刷新（拉最新数据重绘当前平台）
 });
