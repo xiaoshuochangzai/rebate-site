@@ -59,7 +59,9 @@ NIGHT_MSG = "@所有人 今日劲爆低价线报都在下面网站，不要错�
 CAL_URL = "https://www.haodanku.com/ActivityApi/getCalandar?id=24"
 CAL_SNAPSHOT = os.path.join(BASE_DIR, "hd_calandar_snapshot.json")
 REDPACK_STATE = os.path.join(BASE_DIR, "redpack_state.json")
-REDPACK_JD_URL = "https://u.jd.com/FDFQoBI"
+REDPACK_JD_URL = "https://u.jd.com/FDFQoBI"   # 京享红包兜底链接（Boss 提供）
+REDPACK_SRC_URL = "https://u.jd.com/FDFQoBI"  # 重转源：京享红包活动原始链接
+REDPACK_REFRESH_EVERY = 10  # 每 10 次使用重转一次（Boss 2026-10-19 明令；campaign=t_1001330651 是他联盟 ID，转链正常才带）
 REDPACK_TB_TAIL = "淘宝红包口令：77￥ HU926 6FiQTthHJE8￥（复制后打开淘宝APP自动弹出）\nhttps://m.tb.cn/h.jXgUEoC"
 REDPACK_MUTE_SEC = 120   # 文案发出后 2 分钟线报静默（Boss 明令）
 _RP_CACHE = {"cal": None}
@@ -241,6 +243,40 @@ def _bump_tb_sent(n=1):
     st["tb_sent_cnt"] = int(st.get("tb_sent_cnt", 0) or 0) + n
     _save_json(STATE_FILE, st)
     return st["tb_sent_cnt"]
+
+
+def _get_redpack_link(log=print):
+    """京享红包尾链接：每 10 次使用重转一次（Boss 2026-10-19 明令）。
+    转链源固定为 Boss 提供的活动原始链接 REDPACK_SRC_URL；经精品库登录账号
+    （联盟 ID t_1001330651）出链。短链跳转全加密（u.jd.com/jda?e=..&p=..），
+    服务端验不了 campaign 参数，以「转链通道成功出 u.jd.com 新短链」为准——
+    通道就是商品转链同一账号，出链必然绑他联盟 ID。
+    转链失败沿用旧链接，绝不阻塞推送。计数存 keyword_state.json 重启接着数。"""
+    st = _load_state()
+    link = (st.get("redpack_link") or "").strip()
+    used = int(st.get("redpack_used", 0) or 0)
+    if (not link) or used >= REDPACK_REFRESH_EVERY:
+        new = ""
+        try:
+            import jp_api
+            ok, out, _imgs = jp_api.convert_material(REDPACK_SRC_URL)
+            if ok and out:
+                m = re.search(r"https?://u\.jd\.com/\w+", out)
+                if m:
+                    new = m.group(0)
+        except Exception as e:
+            log(f"京享红包重转异常（沿用旧链接）：{str(e)[:60]}")
+        if new:
+            log(f"京享红包链接已重转：{new}（旧：{link or '无'}，已用 {used} 次）")
+            link = new
+            used = 0
+        else:
+            log(f"京享红包重转未出新链（沿用 {link or REDPACK_JD_URL}）")
+    st = _load_state()
+    st["redpack_link"] = link
+    st["redpack_used"] = used + 1
+    _save_json(STATE_FILE, st)
+    return link or REDPACK_JD_URL
 
 
 def _fmt_one(deal):
@@ -614,7 +650,7 @@ def flush(deals, log=print):
         # Boss 2026-10-16 明令：京享红包不再插进消息中间，改成每 2 条在【最后】垫红包尾；
         # 红包尾和每 5 条的旧站链尾都指向 shengqian.cyou，带红包尾的那条就不再叠旧站链尾
         if sent_cnt % REDPACK_EVERY == 0:
-            tail = "\n————\n下单前先领京东红包，更省钱\n" + REDPACK_JD_URL
+            tail = "\n————\n下单前先领京东红包，更省钱\n" + _get_redpack_link(log=log)
         elif sent_cnt % FOOTER_EVERY == 0:
             tail = "\n" + FOOTER
         else:
