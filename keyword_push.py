@@ -614,7 +614,7 @@ def flush(deals, log=print):
         # Boss 2026-10-16 明令：京享红包不再插进消息中间，改成每 2 条在【最后】垫红包尾；
         # 红包尾和每 5 条的旧站链尾都指向 shengqian.cyou，带红包尾的那条就不再叠旧站链尾
         if sent_cnt % REDPACK_EVERY == 0:
-            tail = "\n————\n下单前先领京东红包，更省钱\nhttps://shengqian.cyou/"
+            tail = "\n————\n下单前先领京东红包，更省钱\n" + REDPACK_JD_URL
         elif sent_cnt % FOOTER_EVERY == 0:
             tail = "\n" + FOOTER
         else:
