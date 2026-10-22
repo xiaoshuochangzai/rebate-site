@@ -384,7 +384,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 <script>
 let DEALS = __DATA__;
 const PAGE_SIZE = 60;
-let filter = '2', kw = '', shown = 0;  // 默认京东（京东第一、淘宝第二，无「全部」）
+let filter = 'welfare', kw = '', shown = 0;  // 默认进站显示「双11福利清单」（Boss 2026-10-22 明令）
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function escWithLinks(ln){
   // 转义整行并把行内所有 http(s) 链接转成可点链接（修复行中券链显示灰色不可点）
