@@ -135,25 +135,32 @@ background:#FFF7F6;border-radius:4px;padding:1px 8px}
 .wf-tpwd{font-size:12px;color:#8a909c;margin-top:5px;cursor:pointer;user-select:all}
 .wf-tpwd:hover{color:var(--brand)}
 
-/* ---------- 红包弹层（每会话各平台弹一次） ---------- */
-#rpMask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:97;
+/* ---------- 红包弹层（仿好单库大红包卡，每会话各平台弹一次） ---------- */
+#rpMask{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:97;
 display:none;align-items:center;justify-content:center}
 #rpMask.show{display:flex}
-#rpBox{position:relative;width:308px;max-width:86vw;background:#fff;border-radius:16px;
-padding:26px 20px 18px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.28)}
-.rp-x{position:absolute;right:12px;top:8px;font-size:22px;line-height:1;color:#c2c6cc;cursor:pointer}
-.rp-x:hover{color:#888}
-.rp-ttl{font-size:19px;font-weight:500;color:#E12319;letter-spacing:.5px}
-.rp-sub{font-size:12px;color:#8a909c;margin-top:6px}
-.rp-code{margin-top:16px;padding:11px 12px;background:#FFF3F2;border:1px dashed #FFB3AE;
-border-radius:10px;font-size:13px;color:#E12319;word-break:break-all;cursor:pointer;user-select:all}
-.rp-code:hover{background:#FFEAE8}
-.rp-tip{font-size:11px;color:#a6abb3;margin-top:8px;line-height:1.5}
-.rp-btn{display:block;margin-top:14px;background:#E12319;color:#fff;font-size:15px;
-font-weight:500;padding:11px 0;border-radius:999px;text-decoration:none;transition:.18s}
-.rp-btn:hover{background:#C11B14}
-.rp-close{margin-top:11px;font-size:12px;color:#a6abb3;cursor:pointer}
-.rp-close:hover{color:#888}
+#rpBox{width:300px;max-width:86vw;border-radius:22px;overflow:hidden;position:relative;
+text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.35);background:#E02020}
+.rp-body{background:linear-gradient(165deg,#FF6A45,#E02020 55%,#C51610);padding:30px 18px 18px;color:#fff}
+.rp-body.rp-jd{background:linear-gradient(165deg,#FF5A45,#E1251B 55%,#A31414)}
+.rp-brand{font-size:13px;letter-spacing:3px;opacity:.92}
+.rp-big{font-size:30px;font-weight:800;color:#FFE14D;letter-spacing:2px;
+margin:8px 0 2px;text-shadow:0 2px 0 rgba(0,0,0,.18)}
+.rp-sub1{font-size:17px;font-weight:600}
+.rp-sub1 b{color:#FFE14D;font-size:24px}
+.rp-open{width:76px;height:76px;border-radius:50%;margin:20px auto 12px;cursor:pointer;
+background:radial-gradient(circle at 35% 30%,#FFF3C9,#FFC53D 70%,#F5A623);
+color:#B01F14;font-size:30px;font-weight:800;display:flex;align-items:center;justify-content:center;
+border:4px solid #FFF3C9;box-shadow:0 6px 18px rgba(0,0,0,.3);
+transition:transform .15s}
+.rp-open:hover{transform:scale(1.07)}
+.rp-code-line{font-size:12px;color:#FFE9C8;margin-top:2px;cursor:pointer;word-break:break-all}
+.rp-code-line:hover{color:#fff}
+.rp-time{font-size:11px;opacity:.85;margin-top:10px}
+.rp-x{position:absolute;top:8px;right:10px;width:30px;height:30px;border-radius:50%;
+background:rgba(0,0,0,.32);color:#fff;font-size:19px;line-height:29px;text-align:center;cursor:pointer;z-index:2}
+.rp-x:hover{background:rgba(0,0,0,.5)}
+@media(max-width:380px){.rp-big{font-size:26px}}
 /* 福利行式布局（学好单库聚合页：图+标题+领券省X元+到手价划线原价+去抢购） */
 #list.wflist{display:block;max-width:860px;margin:0 auto}
 .wf-row{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;
@@ -402,15 +409,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 <div id="toast"></div>
 
 <div id="rpMask">
-  <div id="rpBox">
-    <div class="rp-x" id="rpClose">×</div>
-    <div class="rp-ttl" id="rpTtl">领双11红包</div>
-    <div class="rp-sub" id="rpSub">下单前先领，能省一点是一点</div>
-    <div class="rp-code" id="rpCode" title="点击复制口令"></div>
-    <div class="rp-tip" id="rpTip"></div>
-    <a class="rp-btn" id="rpGo" href="#" target="_blank" rel="noopener">去领取</a>
-    <div class="rp-close" id="rpNo">已领过，不用了</div>
-  </div>
+  <div id="rpBox"></div>
 </div>
 
 <script>
@@ -673,21 +672,34 @@ function showRedpack(kind){
   if(_rpSeen(kind)) return;                 // 本会话已弹过，不再弹
   try{ sessionStorage.setItem('rp_'+kind, '1'); }catch(e){}
   const isTb = (kind === 'tb');
-  document.getElementById('rpTtl').textContent = isTb ? '领淘宝超级红包' : '领京东红包';
-  document.getElementById('rpSub').textContent = isTb
-    ? '复制口令，打开淘宝App自动弹出' : '点击领取，下单直接抵扣';
-  const code = document.getElementById('rpCode');
-  code.style.display = isTb ? 'block' : 'none';
-  code.textContent = isTb ? RP.tb.tpwd : '';
-  document.getElementById('rpTip').textContent = isTb ? '点口令复制 → 点「去领取」打开淘宝' : '';
-  document.getElementById('rpGo').href = isTb ? RP.tb.url : RP.jd;
+  const box = document.getElementById('rpBox');
+  box.innerHTML =
+    '<div class="rp-x" id="rpX">×</div>'
+    + '<div class="rp-body'+(isTb?'':' rp-jd')+'">'
+    +   '<div class="rp-brand">'+(isTb?'淘宝双11 天猫同款':'京东双11 红包大促')+'</div>'
+    +   '<div class="rp-big">'+(isTb?'超级红包':'抢红包啦')+'</div>'
+    +   '<div class="rp-sub1">最高抢<b>26888</b>元</div>'
+    +   '<div class="rp-open" id="rpGo">'+(isTb?'開':'抢')+'</div>'
+    +   '<div class="rp-code-line" id="rpCode">'+(isTb?('口令：'+esc(RP.tb.tpwd)+'（点击复制）'):'点「抢」打开京东App领红包')+'</div>'
+    +   '<div class="rp-time">'+(isTb?'活动时间：10月15日10点-11月13日24点':'活动时间：2026.10.12-2026.11.11')+'</div>'
+    + '</div>';
   document.getElementById('rpMask').classList.add('show');
+  document.getElementById('rpX').onclick = closeRedpack;
+  document.getElementById('rpCode').onclick = function(){
+    if(isTb) copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓');
+  };
+  document.getElementById('rpGo').onclick = function(){
+    if(isTb){
+      // 学好单库：写剪贴板口令再跳红包会场（手机淘宝自动弹红包）
+      try{ copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓'); }catch(e){}
+      setTimeout(function(){ location.href = RP.tb.url; }, 350);
+    }else{
+      window.open(RP.jd, '_blank'); closeRedpack();
+    }
+  };
 }
 function closeRedpack(){ document.getElementById('rpMask').classList.remove('show'); }
-document.getElementById('rpClose').onclick = closeRedpack;
-document.getElementById('rpNo').onclick = closeRedpack;
 document.getElementById('rpMask').onclick = function(e){ if(e.target === this) closeRedpack(); };
-document.getElementById('rpCode').onclick = function(){ copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓'); };
 
 document.getElementById('welfareBar').addEventListener('click', e=>{
   const sp = e.target.closest('span'); if(!sp) return;
