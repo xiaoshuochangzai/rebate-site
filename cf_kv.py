@@ -96,17 +96,26 @@ def put_deals(deals):
     return False, msg
 
 
+def put_welfare(obj):
+    """双11福利清单整包写 KV（key=welfare，前端 /api/welfare 读）。"""
+    return put_value("welfare", obj)
+
+
+def put_redpack(obj):
+    """红包弹层配置写 KV（key=redpack，前端 /api/redpack 读）。"""
+    return put_value("redpack", obj)
+
+
 def seed_from_local():
     """用本地 site/deals.json 播种 KV（首次上线用）。"""
     deals = json.load(open(os.path.join(BASE_DIR, "site", "deals.json"), encoding="utf-8"))
     return put_deals(deals)
 
 
-def put_welfare(obj):
-    """双11福利清单整包写 KV（key=welfare，与 deals 同 namespace，前端 /api/welfare 读）。
-    逻辑与 put_deals 相同：502/503/504 重试。返回 (ok, msg)。"""
+def put_value(key, obj):
+    """任意 key 整包写 KV（与 deals 同 namespace）。502/503/504 重试。返回 (ok, msg)。"""
     url = (f"https://api.cloudflare.com/client/v4/accounts/{CFG['account_id']}"
-           f"/storage/kv/namespaces/{CFG['namespace_id']}/values/welfare")
+           f"/storage/kv/namespaces/{CFG['namespace_id']}/values/{key}")
     payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     msg = ""
     for attempt in range(1 + PUT_RETRIES):

@@ -134,6 +134,26 @@ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hi
 background:#FFF7F6;border-radius:4px;padding:1px 8px}
 .wf-tpwd{font-size:12px;color:#8a909c;margin-top:5px;cursor:pointer;user-select:all}
 .wf-tpwd:hover{color:var(--brand)}
+
+/* ---------- 红包弹层（每会话各平台弹一次） ---------- */
+#rpMask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:97;
+display:none;align-items:center;justify-content:center}
+#rpMask.show{display:flex}
+#rpBox{position:relative;width:308px;max-width:86vw;background:#fff;border-radius:16px;
+padding:26px 20px 18px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.28)}
+.rp-x{position:absolute;right:12px;top:8px;font-size:22px;line-height:1;color:#c2c6cc;cursor:pointer}
+.rp-x:hover{color:#888}
+.rp-ttl{font-size:19px;font-weight:500;color:#E12319;letter-spacing:.5px}
+.rp-sub{font-size:12px;color:#8a909c;margin-top:6px}
+.rp-code{margin-top:16px;padding:11px 12px;background:#FFF3F2;border:1px dashed #FFB3AE;
+border-radius:10px;font-size:13px;color:#E12319;word-break:break-all;cursor:pointer;user-select:all}
+.rp-code:hover{background:#FFEAE8}
+.rp-tip{font-size:11px;color:#a6abb3;margin-top:8px;line-height:1.5}
+.rp-btn{display:block;margin-top:14px;background:#E12319;color:#fff;font-size:15px;
+font-weight:500;padding:11px 0;border-radius:999px;text-decoration:none;transition:.18s}
+.rp-btn:hover{background:#C11B14}
+.rp-close{margin-top:11px;font-size:12px;color:#a6abb3;cursor:pointer}
+.rp-close:hover{color:#888}
 /* 福利行式布局（学好单库聚合页：图+标题+领券省X元+到手价划线原价+去抢购） */
 #list.wflist{display:block;max-width:860px;margin:0 auto}
 .wf-row{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;
@@ -381,6 +401,18 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 <div id="lightbox"><img alt=""></div>
 <div id="toast"></div>
 
+<div id="rpMask">
+  <div id="rpBox">
+    <div class="rp-x" id="rpClose">×</div>
+    <div class="rp-ttl" id="rpTtl">领双11红包</div>
+    <div class="rp-sub" id="rpSub">下单前先领，能省一点是一点</div>
+    <div class="rp-code" id="rpCode" title="点击复制口令"></div>
+    <div class="rp-tip" id="rpTip"></div>
+    <a class="rp-btn" id="rpGo" href="#" target="_blank" rel="noopener">去领取</a>
+    <div class="rp-close" id="rpNo">已领过，不用了</div>
+  </div>
+</div>
+
 <script>
 let DEALS = __DATA__;
 const PAGE_SIZE = 60;
@@ -622,6 +654,41 @@ function renderWelfare(){
     .catch(()=>{ document.getElementById('list').innerHTML =
       '<div class="empty">福利清单加载失败，请点「刷新」重试</div>'; });
 }
+// ---------- 红包弹层（Boss 2026-10-23 明令：每会话各平台弹一次，关页重开再弹） ----------
+// 京东红包=京享红包（每 10 次使用经精品库通道重转，链接存 keyword_state.json）
+// 淘宝红包=超级红包口令（复制后打开淘宝App自动弹出）
+const RP_DEFAULT = {
+  jd: "https://u.jd.com/FDFQoBI",
+  tb: { tpwd: "77￥ HU926 6FiQTthHJE8￥", url: "https://m.tb.cn/h.jXgUEoC" },
+};
+let RP = RP_DEFAULT;
+try{
+  fetch('/api/redpack?ts='+Date.now(), {cache:'no-store'})
+    .then(r=>r.ok ? r.json() : null)
+    .then(j=>{ if(j && (j.jd || (j.tb && j.tb.tpwd))) RP = j; })
+    .catch(()=>{});
+}catch(e){}
+function _rpSeen(k){ try{ return sessionStorage.getItem('rp_'+k) === '1'; }catch(e){ return false; } }
+function showRedpack(kind){
+  if(_rpSeen(kind)) return;                 // 本会话已弹过，不再弹
+  try{ sessionStorage.setItem('rp_'+kind, '1'); }catch(e){}
+  const isTb = (kind === 'tb');
+  document.getElementById('rpTtl').textContent = isTb ? '领淘宝超级红包' : '领京东红包';
+  document.getElementById('rpSub').textContent = isTb
+    ? '复制口令，打开淘宝App自动弹出' : '点击领取，下单直接抵扣';
+  const code = document.getElementById('rpCode');
+  code.style.display = isTb ? 'block' : 'none';
+  code.textContent = isTb ? RP.tb.tpwd : '';
+  document.getElementById('rpTip').textContent = isTb ? '点口令复制 → 点「去领取」打开淘宝' : '';
+  document.getElementById('rpGo').href = isTb ? RP.tb.url : RP.jd;
+  document.getElementById('rpMask').classList.add('show');
+}
+function closeRedpack(){ document.getElementById('rpMask').classList.remove('show'); }
+document.getElementById('rpClose').onclick = closeRedpack;
+document.getElementById('rpNo').onclick = closeRedpack;
+document.getElementById('rpMask').onclick = function(e){ if(e.target === this) closeRedpack(); };
+document.getElementById('rpCode').onclick = function(){ copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓'); };
+
 document.getElementById('welfareBar').addEventListener('click', e=>{
   const sp = e.target.closest('span'); if(!sp) return;
   wfCat = sp.dataset.c; renderWfList();
@@ -649,6 +716,9 @@ document.getElementById('plat').addEventListener('click', e=>{
   const li = e.target.closest('li'); if(!li || li.classList.contains('active')) return;
   document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
   li.classList.add('active'); filter = li.dataset.p;
+  // 红包弹层：淘宝类（淘宝/双11福利清单）弹淘宝超红，京东弹京东红包；每会话各弹一次
+  if(filter === '2') showRedpack('jd');
+  else if(filter === '1' || filter === 'welfare') showRedpack('tb');
   if(filter === 'welfare'){ renderWelfare(); return; }  // 双11福利清单：独立专区，不拉线报
   document.getElementById('welfareBar').style.display = 'none';  // 其它状况不显示子标签
   document.getElementById('list').classList.remove('wflist');    // 恢复线报网格
