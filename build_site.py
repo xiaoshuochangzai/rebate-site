@@ -149,12 +149,15 @@ text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.35);background:#E02020;-web
 margin:8px 0 2px;text-shadow:0 2px 0 rgba(0,0,0,.18)}
 .rp-sub1{font-size:17px;font-weight:600}
 .rp-sub1 b{color:#FFE14D;font-size:24px}
-.rp-open{width:76px;height:76px;border-radius:50%;margin:20px auto 12px;cursor:pointer;
+.rp-pic-wrap{position:relative;line-height:0}
+.rp-open{position:absolute;left:50%;bottom:15%;transform:translateX(-50%);width:84px;height:84px;
+border-radius:50%;cursor:pointer;line-height:1;
 background:radial-gradient(circle at 35% 30%,#FFF3C9,#FFC53D 70%,#F5A623);
-color:#B01F14;font-size:30px;font-weight:800;display:flex;align-items:center;justify-content:center;
-border:4px solid #FFF3C9;box-shadow:0 6px 18px rgba(0,0,0,.3);
-transition:transform .15s}
-.rp-open:hover{transform:scale(1.07)}
+color:#B01F14;font-size:34px;font-weight:800;display:flex;align-items:center;justify-content:center;
+border:4px solid #FFF3C9;box-shadow:0 6px 18px rgba(0,0,0,.3);z-index:2;
+animation:rpPulse 1.8s ease-in-out infinite}
+.rp-open:hover{transform:translateX(-50%) scale(1.08)}
+@keyframes rpPulse{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.07)}}
 .rp-code-line{font-size:12px;color:#FFE9C8;margin-top:0;padding:9px 12px 13px;background:#E02020;cursor:pointer;word-break:break-all}
 .rp-code-line:hover{color:#fff}
 .rp-time{font-size:11px;opacity:.85;margin-top:10px}
@@ -687,14 +690,17 @@ function showRedpack(kind){
       + '</picture>'
       + '<div class="rp-code-line" id="rpCode">点击复制口令：' + esc(RP.tb.tpwd) + '</div>';
   }else{
-    // 京东：学好单库工具页的京享红包海报（官方素材图），点图=打开红包活动页
+    // 京东：学好单库工具页的京享红包海报（官方素材图），海报上叠金色「抢」按钮=打开红包活动页
     box.innerHTML = '<div class="rp-x" id="rpX">×</div>'
-      + '<picture>'
-      +   '<source type="image/webp" srcset="img/redpack_jd_2x.webp, img/redpack_jd_3x.webp 1.5x">'
-      +   '<img class="rp-img" id="rpImgJd" src="img/redpack_jd_2x.jpg" srcset="img/redpack_jd_3x.jpg 1.5x" '
-      +        'referrerpolicy="no-referrer" alt="京东双11京享红包" decoding="async">'
-      + '</picture>'
-      + '<div class="rp-code-line" id="rpCode">点击图片，打开京东App领红包</div>';
+      + '<div class="rp-pic-wrap">'
+      +   '<picture>'
+      +     '<source type="image/webp" srcset="img/redpack_jd_2x.webp, img/redpack_jd_3x.webp 1.5x">'
+      +     '<img class="rp-img" id="rpImgJd" src="img/redpack_jd_2x.jpg" srcset="img/redpack_jd_3x.jpg 1.5x" '
+      +          'referrerpolicy="no-referrer" alt="京东双11京享红包" decoding="async">'
+      +   '</picture>'
+      +   '<div class="rp-open" id="rpGo">抢</div>'
+      + '</div>'
+      + '<div class="rp-code-line" id="rpCode">点「抢」打开京东App领红包</div>';
   }
   document.getElementById('rpMask').classList.add('show');
   document.getElementById('rpX').onclick = closeRedpack;
@@ -707,8 +713,10 @@ function showRedpack(kind){
     try{ copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓'); }catch(e){}
     setTimeout(function(){ location.href = RP.tb.url; }, 350);
   };
-  const goEl = document.getElementById('rpImgJd');
+  const goEl = document.getElementById('rpGo');
   if(goEl) goEl.onclick = function(){ window.open(RP.jd, '_blank'); closeRedpack(); };
+  const imgJd = document.getElementById('rpImgJd');   // 整图兜底：点海报空白处也算
+  if(imgJd) imgJd.onclick = function(){ window.open(RP.jd, '_blank'); closeRedpack(); };
 }
 function closeRedpack(){ document.getElementById('rpMask').classList.remove('show'); }
 document.getElementById('rpMask').onclick = function(e){ if(e.target === this) closeRedpack(); };
