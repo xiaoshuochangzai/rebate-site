@@ -673,30 +673,30 @@ function showRedpack(kind){
   try{ sessionStorage.setItem('rp_'+kind, '1'); }catch(e){}
   const isTb = (kind === 'tb');
   const box = document.getElementById('rpBox');
-  box.innerHTML =
-    '<div class="rp-x" id="rpX">×</div>'
-    + '<div class="rp-body'+(isTb?'':' rp-jd')+'">'
-    +   '<div class="rp-brand">'+(isTb?'淘宝双11 天猫同款':'京东双11 红包大促')+'</div>'
-    +   '<div class="rp-big">'+(isTb?'超级红包':'抢红包啦')+'</div>'
-    +   '<div class="rp-sub1">最高抢<b>26888</b>元</div>'
-    +   '<div class="rp-open" id="rpGo">'+(isTb?'開':'抢')+'</div>'
-    +   '<div class="rp-code-line" id="rpCode">'+(isTb?('口令：'+esc(RP.tb.tpwd)+'（点击复制）'):'点「抢」打开京东App领红包')+'</div>'
-    +   '<div class="rp-time">'+(isTb?'活动时间：10月15日10点-11月13日24点':'活动时间：2026.10.12-2026.11.11')+'</div>'
-    + '</div>';
+  if(isTb){
+    // 淘宝：学好单库的大红包卡（官方红包素材图），点图=复制口令+跳红包会场
+    box.innerHTML = '<div class="rp-x" id="rpX">×</div>'
+      + '<img class="rp-img" id="rpImg" src="img/redpack_tb.png" referrerpolicy="no-referrer" alt="淘宝双11超级红包">'
+      + '<div class="rp-code-line" id="rpCode">点击复制口令：' + esc(RP.tb.tpwd) + '</div>';
+  }else{
+    // 京东：学好单库工具页的京享红包海报（官方素材图），点图=打开红包活动页
+    box.innerHTML = '<div class="rp-x" id="rpX">×</div>'
+      + '<img class="rp-img" id="rpImgJd" src="img/redpack_jd.png" referrerpolicy="no-referrer" alt="京东双11京享红包">'
+      + '<div class="rp-code-line" id="rpCode">点击图片，打开京东App领红包</div>';
+  }
   document.getElementById('rpMask').classList.add('show');
   document.getElementById('rpX').onclick = closeRedpack;
-  document.getElementById('rpCode').onclick = function(){
+  const codeEl = document.getElementById('rpCode');
+  if(codeEl) codeEl.onclick = function(){
     if(isTb) copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓');
   };
-  document.getElementById('rpGo').onclick = function(){
-    if(isTb){
-      // 学好单库：写剪贴板口令再跳红包会场（手机淘宝自动弹红包）
-      try{ copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓'); }catch(e){}
-      setTimeout(function(){ location.href = RP.tb.url; }, 350);
-    }else{
-      window.open(RP.jd, '_blank'); closeRedpack();
-    }
+  const imgEl = document.getElementById('rpImg');
+  if(imgEl) imgEl.onclick = function(){
+    try{ copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓'); }catch(e){}
+    setTimeout(function(){ location.href = RP.tb.url; }, 350);
   };
+  const goEl = document.getElementById('rpImgJd');
+  if(goEl) goEl.onclick = function(){ window.open(RP.jd, '_blank'); closeRedpack(); };
 }
 function closeRedpack(){ document.getElementById('rpMask').classList.remove('show'); }
 document.getElementById('rpMask').onclick = function(e){ if(e.target === this) closeRedpack(); };
