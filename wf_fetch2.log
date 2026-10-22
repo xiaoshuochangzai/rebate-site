@@ -1,0 +1,12 @@
+消灭小红包 -> 43 items
+双11付定享礼 -> 104 items
+吃喝玩乐1折起 -> 26 items
+直播精选 -> 117 items
+全网实时热榜 -> 190 items
+今日值得买 -> 158 items
+猫超福利 -> 175 items
+Traceback (most recent call last):
+  File "E:\Jingdong\rebate-site\welfare_fetch.py", line 74, in <module>
+    with open("site/welfare.json", "w", encoding="utf-8") as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'site/welfare.json'
