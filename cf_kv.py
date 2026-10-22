@@ -102,6 +102,34 @@ def seed_from_local():
     return put_deals(deals)
 
 
+def put_welfare(obj):
+    """双11福利清单整包写 KV（key=welfare，与 deals 同 namespace，前端 /api/welfare 读）。
+    逻辑与 put_deals 相同：502/503/504 重试。返回 (ok, msg)。"""
+    url = (f"https://api.cloudflare.com/client/v4/accounts/{CFG['account_id']}"
+           f"/storage/kv/namespaces/{CFG['namespace_id']}/values/welfare")
+    payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    msg = ""
+    for attempt in range(1 + PUT_RETRIES):
+        req = urllib.request.Request(url, data=payload, method="PUT")
+        try:
+            with _open_req(req) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            return (bool(d.get("success")), str(d.get("errors", ""))[:150])
+        except urllib.error.HTTPError as e:
+            msg = f"HTTP Error {e.code}"
+            if e.code in RETRY_CODES and attempt < PUT_RETRIES:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return False, msg
+        except Exception as e:
+            msg = str(e)[:150]
+            if attempt < PUT_RETRIES:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return False, msg
+    return False, msg
+
+
 if __name__ == "__main__":
     ok, msg = seed_from_local()
     print("KV 播种:", "成功" if ok else f"失败 {msg}")

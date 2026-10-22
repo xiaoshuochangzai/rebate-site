@@ -265,6 +265,14 @@ BITUI_SEEN_FILE = os.path.join(BASE_DIR, "seen_bitui.json")  # 必推榜已见�
 BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
 PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id
 PDD_MAX_PER_ROUND = 3  # 单轮最多转链几条拼多多新品
+
+# 双11福利清单自动更新（Boss 2026-10-22 拍板：每 10 分钟一轮，独立线程）
+WELFARE_EVERY = 600  # 秒
+
+
+def _welfare_mod():
+    import welfare_auto
+    return welfare_auto
 PDD_POLL_PAGES = 3     # 每轮轮询商品列表前几页 + 热榜三榜（约 40 条源/轮）
 PDD_COOLDOWN_SEC = 3600  # 转链权限类报错冷却 1 小时，恢复后自动重试，无需重启监控
 LOCK_FILE = os.path.join(BASE_DIR, "monitor.lock")
@@ -702,6 +710,21 @@ def main():
     except Exception as e:
         print("推送模块启动失败：%s" % str(e)[:100])
     start_tb_worker()  # 淘宝转链后台线程（方案B：京东主循环不再被淘宝堵塞）
+
+    # 双11福利清单自动更新（Boss 2026-10-22 拍板：每 10 分钟一轮）
+    # 独立 daemon 线程：一轮约 100s（抓取+增量转链+写 KV），不能堵主循环；
+    # 与 deals 体系完全隔离（自己的 cache、自己的 KV key），异常只记日志
+    def _welfare_loop():
+        wa = _welfare_mod()
+        while True:
+            try:
+                wa.run_once()
+            except Exception as e:
+                print(f"福利清单更新异常：{str(e)[:120]}")
+            time.sleep(WELFARE_EVERY)
+    threading.Thread(target=_welfare_loop, daemon=True).start()
+    print(f"福利清单自动更新线程已启动（每 {WELFARE_EVERY//60} 分钟一轮）")
+
     args = sys.argv[1:]
     once = "--once" in args
     do_init = "--init" in args

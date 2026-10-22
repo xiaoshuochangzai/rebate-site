@@ -608,8 +608,11 @@ function renderWelfare(){
   document.getElementById('list').classList.add('wflist');       // 行式布局（学聚合页）
   if(WELFARE){ renderWfList(); return; }
   document.getElementById('list').innerHTML = '';
-  fetch('welfare.json?ts='+Date.now(), {cache:'no-store'})
+  // 优先 KV 实时通道（监控每 10 分钟写），404/失败回退静态 welfare.json
+  fetch('/api/welfare?ts='+Date.now(), {cache:'no-store'})
     .then(r=>{ if(!r.ok) throw 0; return r.json(); })
+    .catch(()=>fetch('welfare.json?ts='+Date.now(), {cache:'no-store'})
+      .then(r=>{ if(!r.ok) throw 0; return r.json(); }))
     .then(j=>{
       WELFARE = j;
       document.getElementById('welfareBar').innerHTML = (WELFARE.cats||[]).map(c=>
