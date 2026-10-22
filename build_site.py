@@ -139,8 +139,9 @@ background:#FFF7F6;border-radius:4px;padding:1px 8px}
 #rpMask{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:97;
 display:none;align-items:center;justify-content:center}
 #rpMask.show{display:flex}
-#rpBox{width:300px;max-width:86vw;border-radius:22px;overflow:hidden;position:relative;
-text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.35);background:#E02020}
+#rpBox{width:300px;max-width:86vw;max-height:88vh;border-radius:22px;overflow:hidden;overflow-y:auto;position:relative;
+text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.35);background:#E02020;-webkit-overflow-scrolling:touch}
+.rp-img{display:block;width:100%;height:auto;max-height:66vh;object-fit:contain;margin:0 auto}
 .rp-body{background:linear-gradient(165deg,#FF6A45,#E02020 55%,#C51610);padding:30px 18px 18px;color:#fff}
 .rp-body.rp-jd{background:linear-gradient(165deg,#FF5A45,#E1251B 55%,#A31414)}
 .rp-brand{font-size:13px;letter-spacing:3px;opacity:.92}
@@ -154,9 +155,12 @@ color:#B01F14;font-size:30px;font-weight:800;display:flex;align-items:center;jus
 border:4px solid #FFF3C9;box-shadow:0 6px 18px rgba(0,0,0,.3);
 transition:transform .15s}
 .rp-open:hover{transform:scale(1.07)}
-.rp-code-line{font-size:12px;color:#FFE9C8;margin-top:2px;cursor:pointer;word-break:break-all}
+.rp-code-line{font-size:12px;color:#FFE9C8;margin-top:0;padding:9px 12px 13px;background:#E02020;cursor:pointer;word-break:break-all}
 .rp-code-line:hover{color:#fff}
 .rp-time{font-size:11px;opacity:.85;margin-top:10px}
+@media (max-width:360px){#rpBox{width:258px}}
+@media (max-height:600px){.rp-img{max-height:52vh}}
+@media (orientation:landscape) and (max-height:520px){#rpBox{width:240px}.rp-img{max-height:46vh}}
 .rp-x{position:absolute;top:8px;right:10px;width:30px;height:30px;border-radius:50%;
 background:rgba(0,0,0,.32);color:#fff;font-size:19px;line-height:29px;text-align:center;cursor:pointer;z-index:2}
 .rp-x:hover{background:rgba(0,0,0,.5)}
@@ -676,12 +680,20 @@ function showRedpack(kind){
   if(isTb){
     // 淘宝：学好单库的大红包卡（官方红包素材图），点图=复制口令+跳红包会场
     box.innerHTML = '<div class="rp-x" id="rpX">×</div>'
-      + '<img class="rp-img" id="rpImg" src="img/redpack_tb.png" referrerpolicy="no-referrer" alt="淘宝双11超级红包">'
+      + '<picture>'
+      +   '<source type="image/webp" srcset="img/redpack_tb_2x.webp, img/redpack_tb_3x.webp 1.5x">'
+      +   '<img class="rp-img" id="rpImg" src="img/redpack_tb_2x.jpg" srcset="img/redpack_tb_3x.jpg 1.5x" '
+      +        'referrerpolicy="no-referrer" alt="淘宝双11超级红包" decoding="async">'
+      + '</picture>'
       + '<div class="rp-code-line" id="rpCode">点击复制口令：' + esc(RP.tb.tpwd) + '</div>';
   }else{
     // 京东：学好单库工具页的京享红包海报（官方素材图），点图=打开红包活动页
     box.innerHTML = '<div class="rp-x" id="rpX">×</div>'
-      + '<img class="rp-img" id="rpImgJd" src="img/redpack_jd.png" referrerpolicy="no-referrer" alt="京东双11京享红包">'
+      + '<picture>'
+      +   '<source type="image/webp" srcset="img/redpack_jd_2x.webp, img/redpack_jd_3x.webp 1.5x">'
+      +   '<img class="rp-img" id="rpImgJd" src="img/redpack_jd_2x.jpg" srcset="img/redpack_jd_3x.jpg 1.5x" '
+      +        'referrerpolicy="no-referrer" alt="京东双11京享红包" decoding="async">'
+      + '</picture>'
       + '<div class="rp-code-line" id="rpCode">点击图片，打开京东App领红包</div>';
   }
   document.getElementById('rpMask').classList.add('show');
