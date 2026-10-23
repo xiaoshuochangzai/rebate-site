@@ -334,8 +334,9 @@ def _chunks(text, limit=WEBHOOK_MAX):
     return out
 
 
-def _send_webhook(text):
-    """群机器人 webhook：text 消息原样发（链接保持原样），超长自动分片。"""
+def _send_webhook(text, ext_sync=True):
+    """群机器人 webhook：text 消息原样发（链接保持原样），超长自动分片。
+    ext_sync=False 时不同步外部群（双11 期间淘宝线报由 2小时热销榜接管外部群）。"""
     wh = _STATE.get("webhook", "")
     if not wh:
         return False, "webhook 未配置"
@@ -349,7 +350,7 @@ def _send_webhook(text):
                 d = json.loads(r.read().decode("utf-8"))
             if d.get("errcode") == 0:
                 results.append("ok")
-                if wecom_ext is not None:
+                if ext_sync and wecom_ext is not None:
                     wecom_ext.enqueue(c)   # 同步入外部群队列（低频派发，wecom_ext 自控）
             else:
                 ok_all = False
@@ -361,9 +362,19 @@ def _send_webhook(text):
     return ok_all, (f"{len(results)}片 " + "; ".join(results))
 
 
-def _send(text, log=print):
+def _sell2_on():
+    """双11 期间（<= dtk_bitui.SELL2_UNTIL）外部群淘宝线报换成 2小时热销榜：
+    主群的淘宝消息不再同步外部群，京东照常同步。"""
+    try:
+        import dtk_bitui
+        return dtk_bitui.sell2_active()
+    except Exception:
+        return False
+
+
+def _send(text, log=print, ext_sync=True):
     if _STATE.get("channel") == "webhook" or _STATE.get("webhook"):
-        return _send_webhook(text)
+        return _send_webhook(text, ext_sync=ext_sync)
     if wecom_push is None:
         return False, "未配置 webhook，也没有长连接模块"
     targets = _targets()
@@ -690,7 +701,7 @@ def flush(deals, log=print):
             continue
         tb_cnt = _bump_tb_sent()   # 独立计数，重启接着数（与京东 sent_cnt 分开）
         tail = "\n" + TB_FOOTER if tb_cnt % TB_FOOTER_EVERY == 0 else ""
-        ok, msg = _send(TB_TAG + t + tail, log)
+        ok, msg = _send(TB_TAG + t + tail, log, ext_sync=not _sell2_on())
         msgs.append(f"淘宝1条({'带尾' if tail else '无尾'})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))

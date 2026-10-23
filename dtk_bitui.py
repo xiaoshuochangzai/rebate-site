@@ -55,8 +55,29 @@ RANKS = {
         "大淘客热推榜",
         "tt_",
     ),
+    # 2小时热销榜（top_sell2 页面）：2026-10-23 接入，Boss 明令双11期间**只推外部群**、
+    # 不进主群。同一个 top-sell 接口，type=2h_new（CDP 实扒页面请求）。
+    # 注意：不加入 RANK_ORDER（三榜照旧走主群链路），由 incremental.poll_sell2 单独处理。
+    "sell2": (
+        _BFF + "/top-sell?type=2h_new&cid=0&only_brand=0&list_hidden=0&is_forbid=0"
+               "&rank_rise=0&newly_listed=0&peer_promotion=0&page=1&size=120&platform=1",
+        "https://www.dataoke.com/top_sell2?v=2",
+        "大淘客2小时热销榜",
+        "s2_",
+    ),
 }
 RANK_ORDER = ("bitui", "sell", "tui")
+# 双11 时间窗：外部群淘宝线报换成 2小时热销榜（Boss 2026-10-23 明令），含当天；
+# 过期后自动恢复原样（主群淘宝照旧同步外部群、2h 榜停推），无需人工干预
+SELL2_UNTIL = "2026-11-13"
+
+
+def sell2_active():
+    """双11 时间窗开关：当前日期 <= SELL2_UNTIL 视为活动期。"""
+    try:
+        return time.strftime("%Y-%m-%d") <= SELL2_UNTIL
+    except Exception:
+        return False
 # 账号相关常量（从页面请求里抓到的，绑定到当前登录的大淘客账号）
 SITE_ID = 1954293
 PID = "mm_2130470034_3434000269_116316900171"

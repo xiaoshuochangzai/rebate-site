@@ -29,6 +29,10 @@ try:
     import jp_convert as jd_convert  # 精品库转链引擎（drop-in 替换京东联盟版）
     import keyword_push
     import yuebai_short  # u.jd.com → 悦拜短链，防扒站（只影响站上展示 _siteContext，企微推送仍用原文）
+    try:
+        import wecom_ext  # 外部群 RPA 通道（缺失时 2小时热销榜跳过本轮，不标 seen）
+    except Exception:
+        wecom_ext = None
 except Exception:
     # pythonw 无窗口：import 挂了进程会无声消失，不落盘 Boss 永远查不到原因
     import traceback as _tb
@@ -136,7 +140,7 @@ def _tb_worker():
                 k = str(payload.get("id") or "")
                 conv = dtk_bitui.convert_item(payload)
                 if conv and conv.get("tpwd"):
-                    TB_DONE.put(("bitui", payload, conv))
+                    TB_DONE.put((("sell2" if kind == "sell2" else "bitui"), payload, conv))
                     ok_flag = True
                 else:
                     log(f"三榜 {k} 后台转链失败（无淘口令），下轮重试")
@@ -168,7 +172,7 @@ def drain_tb_done(deals, have_ids):
     import dtk_bitui
     import dtk_convert
     import pdd_hdk
-    n_tip = n_bit = n_pdd = 0
+    n_tip = n_bit = n_pdd = n_s2 = 0
     while True:
         try:
             kind, payload, out = TB_DONE.get_nowait()
@@ -211,6 +215,26 @@ def drain_tb_done(deals, have_ids):
                 log(f"拼多多成品处理异常 {gid}：{str(e)[:80]}")
             finally:
                 _tb_inflight_discard(gid)
+        elif kind == "sell2":
+            # 2小时热销榜（双11 期间外部群专属）：只入外部群队列，不进主群 KW_QUEUE
+            gid = str(payload.get("id") or "")
+            try:
+                if out and out.get("tpwd"):
+                    text = dtk_bitui.build_text(payload, out)
+                    if wecom_ext is not None:
+                        wecom_ext.enqueue(text)   # 外部群 RPA 低频派发
+                        _sell2_seen().add(gid)
+                        _sell2_seen_save()
+                        n_s2 += 1
+                        log(f"2小时热销新品已入外部群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                    else:
+                        log(f"2小时热销 {gid} wecom_ext 未加载，本轮跳过（不标 seen，下轮重试）")
+                else:
+                    log(f"2小时热销 {gid} 成品无淘口令，下轮重试")
+            except Exception as e:
+                log(f"2小时热销成品处理异常 {gid}：{str(e)[:80]}")
+            finally:
+                _tb_inflight_discard(gid)
         else:
             gid = str(payload.get("id") or "")
             try:
@@ -234,7 +258,7 @@ def drain_tb_done(deals, have_ids):
     if n_tip or n_pdd:
         persist(deals)
         mark_dirty(f"tb tip x{n_tip}" if not n_pdd else f"pdd x{n_pdd}")
-    return n_tip, n_bit, n_pdd
+    return n_tip, n_bit, n_pdd, n_s2
 
 # pythonw（无窗口）拉起子进程时，Windows 默认会给他弹一个黑色控制台窗口。
 # 监控里 git 兜底推送 / powershell 杀浏览器都会被 Boss 看到「凭空弹窗」，
@@ -262,6 +286,22 @@ PENDING_FILE = os.path.join(BASE_DIR, "pending.json")
 DTK_SEEN_FILE = os.path.join(BASE_DIR, "seen_dtk.json")
 DTK_PENDING_FILE = os.path.join(BASE_DIR, "pending_dtk.json")
 BITUI_SEEN_FILE = os.path.join(BASE_DIR, "seen_bitui.json")  # 必推榜已见商品 id（Boss 2026-09-16：只推新进榜）
+
+# 2小时热销榜（top_sell2）独立快照：外部群双11期间只收这个榜，不能与三榜共用 seen
+# （外部群用户没收到过三榜内容，同一商品进过三榜也照样要推外部群）
+SELL2_SEEN_FILE = os.path.join(BASE_DIR, "seen_sell2.json")
+_SELL2_STATE = {"seen": None}
+SELL2_MAX_PER_ROUND = 2  # 单轮最多转链几条 2h 榜新品（外部群 RPA 派发慢，防积压）
+
+
+def _sell2_seen():
+    if _SELL2_STATE["seen"] is None:
+        _SELL2_STATE["seen"] = set(load_json(SELL2_SEEN_FILE, []))
+    return _SELL2_STATE["seen"]
+
+
+def _sell2_seen_save():
+    save_json(SELL2_SEEN_FILE, sorted(_sell2_seen())[-3000:])
 BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
 PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id
 PDD_MAX_PER_ROUND = 3  # 单轮最多转链几条拼多多新品
@@ -492,6 +532,45 @@ def poll_bitui():
             log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]}新品 {gid} | {it.get('d_title', '')[:26]}（已排入后台转链）")
         if got >= BITUI_MAX_PER_ROUND:
             break
+    return got
+
+
+def poll_sell2():
+    """大淘客2小时热销榜（top_sell2 页面，接口 top-sell?type=2h_new）——双11 期间只推外部群。
+
+    Boss 2026-10-23 明令：双11 期间发到外部群的**淘宝线报**换成这个榜的新品
+    （京东照常同步，主群完全不受影响——三榜照旧走主群链路）。
+    首跑建基线全跳过（防一次性 200 条轰炸）；seen_sell2.json 独立于三榜 seen
+    （外部群用户没收到过三榜内容，同一商品进过三榜也照样要推外部群）。
+    转链复用 dtk_bitui.convert_item（品带超红通路优先，退 get-privilege）。
+    过了 SELL2_UNTIL 自动停推，恢复原样。
+    """
+    import dtk_bitui
+    if not dtk_bitui.sell2_active():
+        return 0
+    seen = _sell2_seen()
+    lst = dtk_bitui.fetch_rank("sell2")
+    if not lst:
+        return 0
+    MARK = "_s2base"
+    if not seen or MARK not in seen:
+        seen.update(str(it.get("id")) for it in lst if it.get("id"))
+        seen.add(MARK)
+        _sell2_seen_save()
+        log(f"2小时热销榜基线已建立：现存 {len(seen) - 1} 条全部跳过，只推之后新进榜的")
+        return 0
+    got = 0
+    for it in lst:
+        if got >= SELL2_MAX_PER_ROUND:
+            break
+        gid = str(it.get("id"))
+        if gid in seen:
+            continue
+        if not _tb_inflight_add(gid):
+            continue  # 已在后台转链中，防重复入队
+        TB_JOBS.put(("sell2", it))
+        got += 1
+        log(f"2小时热销新品 {gid} | {it.get('d_title', '')[:26]}（已排入后台转链→外部群）")
     return got
 
 
@@ -817,6 +896,12 @@ def main():
             except Exception as e:
                 log(f"必推榜轮询异常：{str(e)[:100]}")
 
+            # 大淘客2小时热销榜（Boss 2026-10-23：双11期间外部群淘宝线报换成这个榜）
+            try:
+                poll_sell2()
+            except Exception as e:
+                log(f"2小时热销榜轮询异常：{str(e)[:100]}")
+
             # 好单库拼多多新品（2026-10-18 接入：新商品转链后上站第三 tab）
             try:
                 poll_pdd(deals, have_ids)
@@ -825,9 +910,9 @@ def main():
 
             # 收淘宝后台转链成品（入库/进推送队列；主线程单写者纪律）
             try:
-                n_tip, n_bit, n_pdd = drain_tb_done(deals, have_ids)
-                if n_bit:
-                    mark_dirty(f"bitui x{n_bit}")
+                n_tip, n_bit, n_pdd, n_s2 = drain_tb_done(deals, have_ids)
+                if n_bit or n_s2:
+                    mark_dirty(f"bitui x{n_bit}" + (f" sell2 x{n_s2}" if n_s2 else ""))
             except Exception as e:
                 log(f"淘宝成品回收异常：{str(e)[:100]}")
 
