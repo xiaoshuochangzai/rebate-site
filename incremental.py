@@ -222,6 +222,9 @@ def drain_tb_done(deals, have_ids):
                 if out and out.get("tpwd"):
                     text = dtk_bitui.build_text(payload, out)
                     if wecom_ext is not None:
+                        # Boss 2026-10-23 明令：外部群淘宝每 2 条带一次站链尾
+                        if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
+                            text += SELL2_TAIL
                         wecom_ext.enqueue(text)   # 外部群 RPA 低频派发
                         _sell2_seen().add(gid)
                         _sell2_seen_save()
@@ -302,6 +305,22 @@ def _sell2_seen():
 
 def _sell2_seen_save():
     save_json(SELL2_SEEN_FILE, sorted(_sell2_seen())[-3000:])
+
+
+# 外部群淘宝线报站链尾（Boss 2026-10-23 明令）：sell2 接管外部群后消息是纯文案入队，
+# 丢掉了旧「主群同步」时代带的站链尾 → 恢复「每 2 条带一次」，尾文案与主群 TB_FOOTER 一致。
+# 独立计数存 sell2_tail_state.json（不与 keyword_state.json 混用，两边节奏互不干扰）
+SELL2_TAIL_FILE = os.path.join(BASE_DIR, "sell2_tail_state.json")
+SELL2_TAIL_EVERY = 2
+SELL2_TAIL = "\n————\n更多双11破价好物，访问线报网\nhttps://shengqian.cyou/"
+
+
+def _bump_sell2_tail():
+    st = load_json(SELL2_TAIL_FILE, {})
+    n = int(st.get("n", 0) or 0) + 1
+    save_json(SELL2_TAIL_FILE, {"n": n})
+    return n
+
 BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
 PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id
 PDD_MAX_PER_ROUND = 3  # 单轮最多转链几条拼多多新品
