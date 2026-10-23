@@ -17,8 +17,10 @@ wecom_ext.py — 企微外部群通道 v3.1：多独立窗口矩阵分发 + 拟�
 
 工作方式：
   - keyword_push webhook 成功后文案入队 wext_queue.json
-  - 后台线程逐条派发：对配置的每个窗口 send_now；窗口没开 → 跳过该窗（条目标记 done，
-    未发的窗下轮补发）；全部窗口发完才出队
+  - 后台线程逐条派发：对配置的每个窗口 send_now
+  - Boss 2026-10-23 明令：窗口没开 = 放弃该窗对该条的发送权（标记 done），不补发；
+    三个窗口都没开时消息当轮即全部标记 done 直接出队丢弃。窗口再次打开后，
+    只派发窗口打开后新进队的线报，关闭期间积压的旧线报一律不再发送
   - enabled=false 时休眠
 
 配置（keyword_config.json）：
@@ -309,9 +311,19 @@ def _worker_once(log=print):
                 pass
         else:
             try:
-                log("wecom_ext 失败(跳过该窗): " + msg)
+                log("wecom_ext 失败: " + msg)
             except Exception:
                 pass
+            # Boss 2026-10-23 明令：窗口没开即放弃——该窗错过本条，不再补发。
+            # 三窗都没开时本条在当轮全部标记 done，直接出队丢弃；窗口再次打开后
+            # 只派发新进队的线报，关闭期间积压的旧线报一律不再发送。
+            # 其他失败（uiautomation 缺失、窗口尺寸异常）仍保留等重试。
+            if msg.startswith("独立窗口未打开"):
+                _mark_done(g)
+                try:
+                    log("wecom_ext 积压丢弃(窗口未开): %s | %s" % (g, e["t"][:30].replace("\n", " ")))
+                except Exception:
+                    pass
         gap = _STATE["win_gap"]
         time.sleep(gap + random.uniform(0, gap * 0.3) if gap > 0 else _j(0.02, 0.06))
 
