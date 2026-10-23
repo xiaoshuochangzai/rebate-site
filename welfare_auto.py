@@ -162,21 +162,13 @@ def run_once():
                 _log_state["md5"] = md5
         except Exception as e:
             kv_msg = f"KV 异常 {e}"
-    # 红包弹层配置：京东链接按 Boss 规则（每 10 次使用重转）刷新后一并写 KV
+    # 红包弹层配置：淘宝口令走 createConference_code 实时生成（带我们 pid，不会过期）
+    # 京东链接按 Boss 规则（每 10 次使用重转）一并刷新
     rp_msg = "跳过"
     try:
-        import keyword_push
-        jd_link = keyword_push._get_redpack_link(log=print)
-        rp = {
-            "jd": jd_link or "https://u.jd.com/FDFQoBI",
-            "tb": {"tpwd": keyword_push.REDPACK_TB_TAIL.split("：")[1].split("（")[0].strip(),
-                  "url": keyword_push.REDPACK_TB_TAIL.splitlines()[-1].strip()},
-        }
-        with open(os.path.join("site", "redpack.json"), "w", encoding="utf-8") as f:
-            json.dump(rp, f, ensure_ascii=False, separators=(",", ":"))
-        import cf_kv
-        ok, msg = cf_kv.put_redpack(rp)
-        rp_msg = f"红包KV {'成功' if ok else '失败:' + msg} | 京东 {rp['jd']}"
+        import redpack_fetch
+        rp = redpack_fetch.refresh(log=lambda m: print(m))
+        rp_msg = f"红包 {rp['tb']['tpwd']} | 京东 {rp['jd']}"
     except Exception as e:
         rp_msg = f"红包刷新异常 {str(e)[:80]}"
 

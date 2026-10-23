@@ -159,6 +159,15 @@ animation:rpPulse 1.8s ease-in-out infinite}
 .rp-open:hover{transform:translateX(-50%) scale(1.08)}
 @keyframes rpPulse{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.07)}}
 .rp-code-line{font-size:12px;color:#FFE9C8;margin-top:0;padding:9px 12px 13px;background:#E02020;cursor:pointer;word-break:break-all}
+.rp-tb-btn{margin:10px 14px 0;padding:12px 0;border-radius:999px;text-align:center;cursor:pointer;
+background:linear-gradient(180deg,#FFD24A,#FF9A1F);color:#B01F14;font-size:16px;font-weight:800;
+letter-spacing:1px;box-shadow:0 4px 14px rgba(255,140,0,.45);animation:rpBtnPulse 1.8s ease-in-out infinite}
+.rp-tb-btn:active{transform:scale(.97)}
+@keyframes rpBtnPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+.rp-guide{padding:11px 14px 15px;background:#E02020;color:#FFE9C8;font-size:12px;line-height:1.8;text-align:center}
+.rp-guide b{color:#FFE14D}
+.rp-tpwd{display:inline-block;margin-top:5px;padding:4px 12px;border-radius:10px;background:rgba(0,0,0,.2);
+color:#fff;font-size:13px;letter-spacing:1px;user-select:all;cursor:pointer}
 .rp-code-line:hover{color:#fff}
 .rp-time{font-size:11px;opacity:.85;margin-top:10px}
 @media (max-width:360px){#rpBox{width:258px}}
@@ -667,7 +676,8 @@ const RP_DEFAULT = {
   jd: "https://u.jd.com/FDFQoBI",
   tb: { tpwd: "77￥ HU926 6FiQTthHJE8￥", url: "https://m.tb.cn/h.jXgUEoC" },
 };
-let RP = RP_DEFAULT;
+const RP_EMBED = __RP__;           // 后端内嵌的最新红包配置（首屏即最新口令）
+let RP = (RP_EMBED && RP_EMBED.tb && RP_EMBED.tb.tpwd) ? RP_EMBED : RP_DEFAULT;
 try{
   fetch('/api/redpack?ts='+Date.now(), {cache:'no-store'})
     .then(r=>r.ok ? r.json() : null)
@@ -675,20 +685,30 @@ try{
     .catch(()=>{});
 }catch(e){}
 function _rpSeen(k){ try{ return sessionStorage.getItem('rp_'+k) === '1'; }catch(e){ return false; } }
+function isWeixin(){ return /MicroMessenger/i.test(navigator.userAgent); }
 function showRedpack(kind){
   if(_rpSeen(kind)) return;                 // 本会话已弹过，不再弹
   try{ sessionStorage.setItem('rp_'+kind, '1'); }catch(e){}
   const isTb = (kind === 'tb');
   const box = document.getElementById('rpBox');
   if(isTb){
-    // 淘宝：学好单库的大红包卡（官方红包素材图），点图=复制口令+跳红包会场
+    // 淘宝：海报 + 醒目「立即领红包」按钮
+    // 微信内：只复制口令（微信拦 tbopen:// scheme，跳链接只会落到淘宝H5登录页），并给三步引导
+    // 非微信：复制口令 + 跳 s.tb.cn 短链，浏览器/客户端直接拉起淘宝App
+    const wx = isWeixin();
     box.innerHTML = '<div class="rp-x" id="rpX">×</div>'
-      + '<picture>'
-      +   '<source type="image/webp" srcset="img/redpack_tb_2x.webp, img/redpack_tb_3x.webp 1.5x">'
-      +   '<img class="rp-img" id="rpImg" src="img/redpack_tb_2x.jpg" srcset="img/redpack_tb_3x.jpg 1.5x" '
-      +        'referrerpolicy="no-referrer" alt="淘宝双11超级红包" decoding="async">'
-      + '</picture>'
-      + '<div class="rp-code-line" id="rpCode">点击复制口令：' + esc(RP.tb.tpwd) + '</div>';
+      + '<div class="rp-pic-wrap">'
+      +   '<picture>'
+      +     '<source type="image/webp" srcset="img/redpack_tb_2x.webp, img/redpack_tb_3x.webp 1.5x">'
+      +     '<img class="rp-img" id="rpImg" src="img/redpack_tb_2x.jpg" srcset="img/redpack_tb_3x.jpg 1.5x" '
+      +          'referrerpolicy="no-referrer" alt="淘宝双11超级红包" decoding="async">'
+      +   '</picture>'
+      + '</div>'
+      + '<div class="rp-tb-btn" id="rpTbGo">立即领红包</div>'
+      + (wx
+        ? '<div class="rp-guide">口令已复制，<b>打开淘宝App</b> 即可自动弹红包<br>① 切到淘宝App → ② 首页点「粘贴此口令」<br>'
+          + '<span class="rp-tpwd" id="rpTpwd">' + esc(RP.tb.tpwd) + '</span></div>'
+        : '<div class="rp-code-line" id="rpCode">点「立即领红包」直接唤起淘宝App领取</div>');
   }else{
     // 京东：学好单库工具页的京享红包海报（官方素材图），海报上叠金色「抢」按钮=打开红包活动页
     box.innerHTML = '<div class="rp-x" id="rpX">×</div>'
@@ -708,11 +728,19 @@ function showRedpack(kind){
   if(codeEl) codeEl.onclick = function(){
     if(isTb) copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓');
   };
+  function _takeTb(){
+    // 微信内只复制口令：微信拦 tbopen:// scheme，跳链接只会落到淘宝H5→登录页
+    copy(RP.tb.tpwd, isWeixin() ? '口令已复制，打开淘宝App自动弹红包 ✓' : '正在打开淘宝App…');
+    if(!isWeixin()){
+      setTimeout(function(){ location.href = RP.tb.url; }, 400);
+    }
+  }
+  const tbBtn = document.getElementById('rpTbGo');
+  if(tbBtn) tbBtn.onclick = _takeTb;
+  const tpwdEl = document.getElementById('rpTpwd');
+  if(tpwdEl) tpwdEl.onclick = function(){ copy(RP.tb.tpwd, '口令已复制，打开淘宝App自动弹红包 ✓'); };
   const imgEl = document.getElementById('rpImg');
-  if(imgEl) imgEl.onclick = function(){
-    try{ copy(RP.tb.tpwd, '口令已复制，打开淘宝App粘贴 ✓'); }catch(e){}
-    setTimeout(function(){ location.href = RP.tb.url; }, 350);
-  };
+  if(imgEl) imgEl.onclick = _takeTb;          // 整图兜底
   const goEl = document.getElementById('rpGo');
   if(goEl) goEl.onclick = function(){ window.open(RP.jd, '_blank'); closeRedpack(); };
   const imgJd = document.getElementById('rpImgJd');   // 整图兜底：点海报空白处也算
@@ -874,8 +902,16 @@ def build_html(deals, cfg, convert_stats):
     data_json = json.dumps(deals[:EMBED_MAX], ensure_ascii=False).replace("</", "<\\/")
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     ts_hm = time.strftime("%H:%M")
+    # 首屏内嵌最新红包配置：避免用户点 tab 弹层时 /api/redpack 还没回来，
+    # 导致复制到写死的旧口令（2026-10-23 修）
+    try:
+        with open(os.path.join(SITE_DIR, "redpack.json"), encoding="utf-8") as f:
+            rp_json = json.dumps(json.load(f), ensure_ascii=False).replace("</", "<\\/")
+    except Exception:
+        rp_json = "{}"
     return (TPL
             .replace("__DATA__", data_json)
+            .replace("__RP__", rp_json)
             .replace("__TS_HM__", ts_hm)
             .replace("__TS__", ts))
 

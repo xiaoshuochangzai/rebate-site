@@ -63,6 +63,23 @@ REDPACK_JD_URL = "https://u.jd.com/FDFQoBI"   # 京享红包兜底链接（Boss 
 REDPACK_SRC_URL = "https://u.jd.com/FDFQoBI"  # 重转源：京享红包活动原始链接
 REDPACK_REFRESH_EVERY = 10  # 每 10 次使用重转一次（Boss 2026-10-19 明令；campaign=t_1001330651 是他联盟 ID，转链正常才带）
 REDPACK_TB_TAIL = "淘宝红包口令：77￥ HU926 6FiQTthHJE8￥（复制后打开淘宝APP自动弹出）\nhttps://m.tb.cn/h.jXgUEoC"
+
+
+def _tb_redpack_tail():
+    """淘宝红包尾文案：优先用实时生成的口令+短链（redpack_fetch 写 site/redpack.json）。
+
+    微信内点 s.tb.cn / m.tb.cn 只会落到淘宝H5登录页（微信拦 tbopen:// scheme），
+    所以以「口令」为主，链接作为非微信环境的直跳入口。
+    """
+    try:
+        with open(os.path.join(BASE_DIR, "site", "redpack.json"), encoding="utf-8") as f:
+            tb = (json.load(f) or {}).get("tb") or {}
+        tpwd, url = tb.get("tpwd"), tb.get("url")
+        if tpwd and url:
+            return "淘宝红包口令：%s（复制后打开淘宝APP自动弹出）\n%s" % (tpwd, url)
+    except Exception:
+        pass
+    return REDPACK_TB_TAIL
 REDPACK_MUTE_SEC = 120   # 文案发出后 2 分钟线报静默（Boss 明令）
 _RP_CACHE = {"cal": None}
 REDPACK_EVERY = 1        # 京东每 2 条带一次红包推广（Boss 2026-10-13 明令）
@@ -575,7 +592,7 @@ def redpack_tick(log=print):
         if plat == "jd":
             msg = "【京东】" + text + "\n京东红包入口：" + REDPACK_JD_URL
         else:
-            msg = "【淘宝】" + text + "\n" + REDPACK_TB_TAIL
+            msg = "【淘宝】" + text + "\n" + _tb_redpack_tail()
         ok, info = _send(msg, log)
         if ok:
             fired[key] = 1
