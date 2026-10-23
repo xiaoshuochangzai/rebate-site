@@ -222,6 +222,8 @@ def drain_tb_done(deals, have_ids):
                 if out and out.get("tpwd"):
                     text = dtk_bitui.build_text(payload, out)
                     if wecom_ext is not None:
+                        # Boss 2026-10-23 明令：外部群淘宝每条开头带【淘宝】（旧主群同步时代自带，sell2 接管后补回）
+                        text = "【淘宝】" + text
                         # Boss 2026-10-23 明令：外部群淘宝每 2 条带一次站链尾
                         if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
                             text += SELL2_TAIL
