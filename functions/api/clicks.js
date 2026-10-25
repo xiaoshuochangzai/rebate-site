@@ -1,5 +1,5 @@
 // Pages Function: GET /api/clicks
-// 读全部点击计数（Boss 2026-10-25 明令）：KV list 前缀 clk_ 聚合返回。
+// 读全部点击计数 D1 精确版（Boss 2026-10-25 升级）：GROUP BY day, ev 聚合返回。
 // {
 //   "detail": { "2026-10-25_banner_tb": 37, ... },   // 按天+事件明细
 //   "total":  { "banner_tb": 52, "banner_jd": 33, ... } // 按事件合计
@@ -9,20 +9,14 @@ export async function onRequest(context) {
   const detail = {};
   const total = {};
   try {
-    let cursor;
-    do {
-      const r = await env.DEALS_KV.list({ prefix: "clk_", cursor: cursor, limit: 1000 });
-      for (const k of (r.keys || [])) {
-        const name = k.name;                       // clk_2026-10-25_banner_tb
-        const v = parseInt((await env.DEALS_KV.get(name)) || "0", 10) || 0;
-        const day = name.slice(4, 14);             // 2026-10-25
-        const ev = name.slice(15);                 // banner_tb
-        if (!ev) continue;
-        detail[day + "_" + ev] = v;
-        total[ev] = (total[ev] || 0) + v;
-      }
-      cursor = r.list_complete ? undefined : r.cursor;
-    } while (cursor);
+    const r = await env.CLICKS_DB.prepare(
+      "SELECT day, ev, COUNT(*) AS c FROM clicks GROUP BY day, ev ORDER BY day DESC, c DESC"
+    ).all();
+    for (const row of (r.results || [])) {
+      if (!row.ev) continue;
+      detail[row.day + "_" + row.ev] = row.c;
+      total[row.ev] = (total[row.ev] || 0) + row.c;
+    }
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), {
       status: 500,

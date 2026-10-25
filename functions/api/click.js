@@ -1,7 +1,7 @@
 // Pages Function: GET /api/click?e=<事件名>
-// 元素点击计数（Boss 2026-10-25 明令）：前端 navigator.sendBeacon 静默上报，
-// KV 按「clk_<UTC+8日期>_<事件>」分桶 +1，/api/clicks 读汇总。
-// KV 免费层同 key 限 1 写/秒；本站流量级（日点击几百）几乎不触限，误差 <2%，趋势可信。
+// 点击计数 D1 精确版（Boss 2026-10-25 升级）：每次点击 INSERT 一行，零丢失
+// （KV 版同 key 限 1 写/秒有少量丢失；本站流量上 D1 后无误差，免费额度 10 万写/天）。
+// D1 绑定名 CLICKS_DB；表 clicks(day TEXT, ev TEXT) 由本函数懒建（IF NOT EXISTS 幂等）。
 // 上报失败一律静默返回 200，绝不影响用户体验。
 export async function onRequest(context) {
   const { env, request } = context;
@@ -16,9 +16,10 @@ export async function onRequest(context) {
   }
   try {
     const day = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    const key = "clk_" + day + "_" + e;
-    const cur = parseInt((await env.DEALS_KV.get(key)) || "0", 10) || 0;
-    await env.DEALS_KV.put(key, String(cur + 1));
+    const db = env.CLICKS_DB;
+    await db.prepare("CREATE TABLE IF NOT EXISTS clicks (day TEXT NOT NULL, ev TEXT NOT NULL)")
+      .run();
+    await db.prepare("INSERT INTO clicks (day, ev) VALUES (?, ?)").bind(day, e).run();
   } catch (_) {}
   return new Response("ok", { status: 200, headers });
 }
