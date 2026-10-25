@@ -617,6 +617,77 @@ def redpack_tick(log=print):
         time.sleep(0.4)
 
 
+# ============ 每日点击汇总（Boss 2026-10-25 明令） ============
+# 每天 23:00 发一次当日点击汇总到主群（夜闸 23:27 前、电脑 23:30 关机前）。
+# 数据源 = 站点 /api/clicks（Function 读存储聚合），KV/D1 底层切换对本函数无感。
+# 只发主群，不同步外部群（运营数据，线报群不发）。
+CLICK_STAT_HM = "23:00"
+CLICK_STAT_URL = "https://shengqian.cyou/api/clicks"
+# 汇总消息里的事件中文名（缺失的事件不显示）
+CLICK_STAT_NAMES = {
+    "banner_jd": "京东红包banner", "banner_tb": "淘宝红包banner",
+    "tab_jd": "京东tab", "tab_tb": "淘宝tab", "tab_pdd": "拼多多tab", "tab_welfare": "福利清单tab",
+    "redpack_tb": "淘宝红包弹层", "redpack_jd": "京东红包弹层",
+    "copy": "复制文案",
+}
+
+
+def _click_stat_fetch():
+    req = urllib.request.Request(CLICK_STAT_URL + "?ts=" + str(int(time.time())),
+                                 headers={"User-Agent": "curl/8.0"})
+    with OPENER.open(req, timeout=15) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def click_stat_tick(log=print):
+    """每天 23:00 发一次当日点击汇总（Boss 2026-10-25 明令）。监控主循环每轮调用。"""
+    if time.strftime("%H:%M") < CLICK_STAT_HM:
+        return
+    today = time.strftime("%Y-%m-%d")
+    st = _load_state()
+    if st.get("click_stat_on") == today:
+        return
+    try:
+        data = _click_stat_fetch()
+        detail = (data or {}).get("detail") or {}
+    except Exception as e:
+        # 拉取失败也记当天已处理，防每轮重试轰炸；明天 23:00 自然再来
+        st["click_stat_on"] = today
+        _save_json(STATE_FILE, st)
+        log(f"点击汇总拉取失败（今天不再重试）：{str(e)[:80]}")
+        return
+    day = {k.split("_", 1)[1]: v for k, v in detail.items() if k.startswith(today + "_")}
+    if not day:
+        st["click_stat_on"] = today
+        _save_json(STATE_FILE, st)
+        log("点击汇总：今日无数据，跳过")
+        return
+
+    def g(ev):
+        return int(day.get(ev, 0) or 0)
+
+    total = sum(int(v or 0) for v in day.values())
+    lines = [f"【今日点击汇总】{today[5:]}"]
+    b_jd, b_tb = g("banner_jd"), g("banner_tb")
+    if b_jd or b_tb:
+        lines.append(f"红包banner：京东 {b_jd} | 淘宝 {b_tb}")
+    tabs = [("京东", g("tab_jd")), ("淘宝", g("tab_tb")),
+            ("拼多多", g("tab_pdd")), ("福利清单", g("tab_welfare"))]
+    if any(v for _, v in tabs):
+        lines.append("平台tab：" + " | ".join(f"{n} {v}" for n, v in tabs if v))
+    r_tb, r_jd = g("redpack_tb"), g("redpack_jd")
+    if r_tb or r_jd:
+        lines.append(f"红包弹层：淘宝 {r_tb} | 京东 {r_jd}")
+    if g("copy"):
+        lines.append(f"复制文案：{g('copy')} 次")
+    lines.append(f"今日合计 {total} 次")
+    msg = "\n".join(lines)
+    ok, info = _send(msg, log, ext_sync=False)   # 只发主群
+    st["click_stat_on"] = today
+    _save_json(STATE_FILE, st)
+    log(f"点击汇总已发（{'ok' if ok else 'fail:' + str(info)[:60]}）：{msg.splitlines()[-1]}")
+
+
 def flush(deals, log=print):
     """推送本轮新线报（京东全推；淘宝需命中关键词）。deals=本轮新入库线报列表（时间倒序）。
     节流：先进 pending，攒够 MAX_PER_ROUND 条 或 距上次推送超过 min_interval 秒才发；

@@ -955,6 +955,11 @@ def main():
                 keyword_push.redpack_tick(log=log)
             except Exception as e:
                 log(f"红包场次检查异常：{str(e)[:80]}")
+            # 每日点击汇总（Boss 2026-10-25 明令）：每天 23:00 发一次当日点击汇总到主群
+            try:
+                keyword_push.click_stat_tick(log=log)
+            except Exception as e:
+                log(f"点击汇总检查异常：{str(e)[:80]}")
             # 每 20 轮（约 10 分钟）打一次推送通道状态，方便排查
             _ROUND[0] += 1
             if _ROUND[0] % 20 == 0 or _ROUND[0] == 1:
