@@ -334,6 +334,8 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
   var JD_URL='https://u.jd.com/FDFQoBI';
   var TB_LAND='https://m.tb.cn/h.jXgUEoC';
   var TB_KOULING='77￥ HU926 6FiQTthHJE8￥';
+  // 点击统计（Boss 2026-10-25 明令）：sendBeacon 静默上报，Function 写 KV 计数
+  window.stat=function(e){try{navigator.sendBeacon('/api/click?e='+encodeURIComponent(e));}catch(_){}}
   function isWX(){return /MicroMessenger/i.test(navigator.userAgent);}
   function isMobile(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);}
   function legacyCopy(t){
@@ -351,6 +353,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
     setTimeout(function(){el.classList.remove('show');},2200);
   }
   document.getElementById('hbJD').addEventListener('click',function(){
+    stat('banner_jd');
     if(!isMobile()){window.open(JD_URL,'_blank');return;}
     if(isWX()){location.href=JD_URL;return;}   // 微信内：直接进红包H5领取
     // 其它移动端：先尝试唤起京东APP，2秒后仍在页面则回落H5领取页
@@ -363,6 +366,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
     },2000);
   });
   document.getElementById('hbTB').addEventListener('click',function(){
+    stat('banner_tb');
     if(!isMobile()){window.open(TB_LAND,'_blank');return;}
     copyText(TB_KOULING);                       // 口令进剪贴板，淘宝APP打开自动识别
     toastMsg('口令已复制，打开淘宝APP领取');
@@ -730,6 +734,7 @@ function showRedpack(kind){
   };
   function _takeTb(){
     // 微信内只复制口令：微信拦 tbopen:// scheme，跳链接只会落到淘宝H5→登录页
+    stat('redpack_tb');
     copy(RP.tb.tpwd, isWeixin() ? '口令已复制，打开淘宝App自动弹红包 ✓' : '正在打开淘宝App…');
     if(!isWeixin()){
       setTimeout(function(){ location.href = RP.tb.url; }, 400);
@@ -742,9 +747,9 @@ function showRedpack(kind){
   const imgEl = document.getElementById('rpImg');
   if(imgEl) imgEl.onclick = _takeTb;          // 整图兜底
   const goEl = document.getElementById('rpGo');
-  if(goEl) goEl.onclick = function(){ window.open(RP.jd, '_blank'); closeRedpack(); };
+  if(goEl) goEl.onclick = function(){ stat('redpack_jd'); window.open(RP.jd, '_blank'); closeRedpack(); };
   const imgJd = document.getElementById('rpImgJd');   // 整图兜底：点海报空白处也算
-  if(imgJd) imgJd.onclick = function(){ window.open(RP.jd, '_blank'); closeRedpack(); };
+  if(imgJd) imgJd.onclick = function(){ stat('redpack_jd'); window.open(RP.jd, '_blank'); closeRedpack(); };
 }
 function closeRedpack(){ document.getElementById('rpMask').classList.remove('show'); }
 document.getElementById('rpMask').onclick = function(e){ if(e.target === this) closeRedpack(); };
@@ -776,6 +781,7 @@ document.getElementById('plat').addEventListener('click', e=>{
   const li = e.target.closest('li'); if(!li || li.classList.contains('active')) return;
   document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
   li.classList.add('active'); filter = li.dataset.p;
+  stat('tab_'+({'2':'jd','1':'tb','4':'pdd','welfare':'welfare'}[li.dataset.p]||li.dataset.p));
   // 红包弹层：淘宝类（淘宝/双11福利清单）弹淘宝超红，京东弹京东红包；每会话各弹一次
   if(filter === '2') showRedpack('jd');
   else if(filter === '1' || filter === 'welfare') showRedpack('tb');
@@ -798,6 +804,7 @@ const listEl = document.getElementById('list');
 listEl.addEventListener('dblclick', e=>{
   if(e.target.closest('a') || e.target.tagName==='IMG') return;
   const card = e.target.closest('.report-item'); if(!card) return;
+  stat('copy');
   copy(card.dataset.text, '文案已复制 ✓');
 });
 // 底角【复制文案】（淘宝卡）：复制完整成品文案，与双击卡片等效
@@ -813,6 +820,7 @@ listEl.addEventListener('click', e=>{
   if(c){
     e.stopPropagation(); e.preventDefault();
     const card = c.closest('.report-item');
+    stat('copy');
     copy((card && card.dataset.text) || '', '文案已复制 ✓');
     return;
   }
