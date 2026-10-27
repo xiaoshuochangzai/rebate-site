@@ -65,6 +65,17 @@ RANKS = {
         "大淘客2小时热销榜",
         "s2_",
     ),
+    # 猫超佣金膨胀（/xp/1111 页面专区 tag=21，2026-10-27 接入，Boss 明令）：外部群双榜之一。
+    # 免登录裸调即通（UA+Referer）；响应结构是 data.goods_list（fetch_rank 已适配）。
+    # 与 2小时热销交叉监听，猫超来的标【天猫超市】，同轮撞车猫超优先。
+    # 不加入 RANK_ORDER，由 incremental.poll_sell2 与 sell2 一起处理。
+    "mc": (
+        "https://dtkapi.ffquan.cn/taobaoapi/get-activity-goods?path=%2Fxp%2F1111"
+        "&tag=21&page=1&page_size=120&sortType=4",
+        "https://www.dataoke.com/xp/1111",
+        "猫超佣金膨胀",
+        "mc_",
+    ),
 }
 RANK_ORDER = ("bitui", "sell", "tui")
 # 双11 时间窗：外部群淘宝线报换成 2小时热销榜（Boss 2026-10-23 明令），含当天；
@@ -86,14 +97,14 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 
 def fetch_rank(kind="bitui"):
-    """拉指定榜单（bitui/sell/tui）。返回 list[dict]（精简字段）；异常返回 []。"""
+    """拉指定榜单（bitui/sell/tui/sell2/mc）。返回 list[dict]（精简字段）；异常返回 []。"""
     url, referer, _, _ = RANKS[kind]
     try:
         r = requests.get(url, headers={"User-Agent": UA, "Referer": referer}, timeout=20)
         j = r.json()
         d = j.get("data")
         if isinstance(d, dict):
-            lst = d.get("list") or []
+            lst = d.get("list") or d.get("goods_list") or []   # mc 专区是 goods_list
         elif isinstance(d, list):
             lst = d
         else:
@@ -116,6 +127,11 @@ def fetch_rank(kind="bitui"):
             "main_pic": it.get("main_pic") or "",
             "shop_name": it.get("shop_name") or "",
             "add_time": it.get("add_time") or "",
+            # 佣金字段透传（外部群佣金门槛 >1 元用，Boss 2026-10-27 明令）：
+            # 页面口径：佣金金额 = commission_rate × price / 100（rate 已含膨胀补贴，
+            # subsidy_rate 只是构成部分，验证 39.9×15.35%=6.12 与页面一致）
+            "commission_rate": it.get("commission_rate") or "",
+            "subsidy_rate": it.get("subsidy_rate") or "",
             "_kind": kind,  # 供 convert/to_deal 取对应 referer/分类名/前缀
         })
     return out

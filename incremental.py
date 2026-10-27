@@ -222,8 +222,9 @@ def drain_tb_done(deals, have_ids):
                 if out and out.get("tpwd"):
                     text = dtk_bitui.build_text(payload, out)
                     if wecom_ext is not None:
-                        # Boss 2026-10-23 明令：外部群淘宝每条开头带【淘宝】（旧主群同步时代自带，sell2 接管后补回）
-                        text = "【淘宝】" + text
+                        # Boss 2026-10-27 明令：猫超佣金膨胀来的标【天猫超市】，其余【淘宝】
+                        # （旧主群同步时代自带标签，sell2 接管后由这里补）
+                        text = ("【天猫超市】" if payload.get("_maochao") else "【淘宝】") + text
                         # Boss 2026-10-23 明令：外部群淘宝每 2 条带一次站链尾
                         if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
                             text += SELL2_TAIL
@@ -556,13 +557,30 @@ def poll_bitui():
     return got
 
 
-def poll_sell2():
-    """大淘客2小时热销榜（top_sell2 页面，接口 top-sell?type=2h_new）——双11 期间只推外部群。
+def _tb_comm_ok(it):
+    """外部群佣金门槛（Boss 2026-10-27 明令）：预估佣金 > 1 元才发。
+    页面口径：佣金金额 = commission_rate × price / 100（rate 已含膨胀补贴，
+    实测 39.9×15.35%=6.12 与大淘客页面显示一致）。字段缺失/解析失败按 0 处理（不发）。"""
+    try:
+        rate = float(it.get("commission_rate") or 0)
+        price = float(it.get("price") or 0)
+        return rate * price / 100.0 > 1.0
+    except Exception:
+        return False
 
-    Boss 2026-10-23 明令：双11 期间发到外部群的**淘宝线报**换成这个榜的新品
+
+def poll_sell2():
+    """大淘客2小时热销榜 + 猫超佣金膨胀双榜（top_sell2 / xp/1111 页面）——双11 期间只推外部群。
+
+    Boss 2026-10-23 明令：双11 期间发到外部群的**淘宝线报**换成 2小时热销榜新品
     （京东照常同步，主群完全不受影响——三榜照旧走主群链路）。
-    首跑建基线全跳过（防一次性 200 条轰炸）；seen_sell2.json 独立于三榜 seen
-    （外部群用户没收到过三榜内容，同一商品进过三榜也照样要推外部群）。
+    Boss 2026-10-27 明令：加入「猫超佣金膨胀」专区（tag=21）双榜交叉：
+      - 猫超来的商品标注【天猫超市】，2小时热销的保持【淘宝】
+      - 同轮两榜都有的商品猫超优先
+      - 两榜共享单轮 2 条配额（猫超优先）
+      - 佣金门槛：预估佣金 >1 元才发（_tb_comm_ok，两榜同规则）
+    首跑建基线全跳过（防一次性轰炸）；seen_sell2.json 两榜共用一份 id 池
+    （同体系 dataoke 商品 id，天然交叉去重）。
     转链复用 dtk_bitui.convert_item（品带超红通路优先，退 get-privilege）。
     过了 SELL2_UNTIL 自动停推，恢复原样。
     """
@@ -570,28 +588,55 @@ def poll_sell2():
     if not dtk_bitui.sell2_active():
         return 0
     seen = _sell2_seen()
-    lst = dtk_bitui.fetch_rank("sell2")
-    if not lst:
+
+    def _pull(kind):
+        lst = dtk_bitui.fetch_rank(kind)
+        if not lst:
+            log(f"{dtk_bitui.RANKS[kind][2]} 本轮拉取为空/失败，跳过")
+        return lst or []
+
+    mc = _pull("mc")
+    s2 = _pull("sell2")
+    if not mc and not s2:
         return 0
     MARK = "_s2base"
     if not seen or MARK not in seen:
-        seen.update(str(it.get("id")) for it in lst if it.get("id"))
+        seen.update(str(it.get("id")) for it in mc + s2 if it.get("id"))
         seen.add(MARK)
         _sell2_seen_save()
-        log(f"2小时热销榜基线已建立：现存 {len(seen) - 1} 条全部跳过，只推之后新进榜的")
+        log(f"外部群双榜基线已建立：猫超 {len(mc)} + 2h热销 {len(s2)}（去重后 {len(seen) - 1}）全部跳过，只推之后新进榜的")
         return 0
+
     got = 0
-    for it in lst:
+    n_low = 0
+    mc_ids = set()
+
+    def _try_put(it, maochao):
+        nonlocal got, n_low
         if got >= SELL2_MAX_PER_ROUND:
-            break
+            return
         gid = str(it.get("id"))
-        if gid in seen:
-            continue
+        if not gid or gid in seen or gid in mc_ids:
+            return
+        if not _tb_comm_ok(it):
+            n_low += 1  # 佣金≤1元不发群；不标 seen（日后佣金膨胀涨过线还能捞起来）
+            return
         if not _tb_inflight_add(gid):
-            continue  # 已在后台转链中，防重复入队
+            return  # 已在后台转链中，防重复入队
+        if maochao:
+            it["_maochao"] = 1
+            mc_ids.add(gid)
         TB_JOBS.put(("sell2", it))
         got += 1
-        log(f"2小时热销新品 {gid} | {it.get('d_title', '')[:26]}（已排入后台转链→外部群）")
+        tag = "猫超佣金膨胀新品" if maochao else "2小时热销新品"
+        log(f"{tag} {gid} | {(it.get('d_title') or '')[:26]}（已排入后台转链→外部群）")
+
+    for it in mc:        # 猫超优先：先猫超后 2h，同轮撞车猫超先占坑并标注
+        _try_put(it, True)
+    for it in s2:
+        _try_put(it, False)
+    if n_low:
+        log(f"外部群佣金门槛过滤 {n_low} 条（预估佣金≤1元，不发群）")
     return got
 
 
