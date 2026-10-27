@@ -1,0 +1,3 @@
+URL: https://dtkapi.ffquan.cn/dtk-go-xp-bff/v1/cps/check-auth?app_token=n03k8kankb3QpowMT-ql0WCuGQZ62EzXBWJmN972ywA91esNIOVRwZYtlZuoan9DlPTKB_kT4nhF0-1gP3rFiPPj-6XbITXd_1WY1JUoEW8EVbOREvjdWx_B4tVwmScDUaUkewTKq6NPOxXuaGuqNMVTeXZwY9gDCqzVM90wuqg
+
+{"cache":false,"code":1,"data":{"detailed":[],"expired":"","join_commission_plan":0},"msg":"ok","time":1793093133}

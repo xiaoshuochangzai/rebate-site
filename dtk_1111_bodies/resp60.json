@@ -1,0 +1,3 @@
+URL: https://dtkapi.ffquan.cn/dtk_go_app_api/v1/get-service-wechat-info
+
+{"cache":false,"code":1,"data":{"service_intro":"为您解决疑难杂症。","service_replace_strategy":1,"service_list":[{"checked":false,"name":"大淘客-小饼干","url":"https://sr.ffquan.cn/sy_admin/20240226/cnduo2nro9ldsjmj8t900.png"}],"business_intro":"优质团长对接资源","business_replace_strategy":1,"business_list":[{"checked":false,"name":"小高","url":"https://sr.ffquan.cn/sy_admin/20250925/d3adhb8g176keqatf61g0.png"}],"exclusive_intro":"1V1专属服务","exclusive_replace_strategy":1,"exclusive_list":[{"checked":false,"name":"1V1专属服务","url":"https://sr.ffquan.cn/sy_admin/20260212/d66ikn36ojedp8d46shg0.png"}],"group_qr_code":"https://sr.ffquan.cn/sy_admin/20260413/d7e8lucumvee7fg5gsi00.png"},"msg":"ok"}
