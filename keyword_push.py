@@ -629,6 +629,8 @@ CLICK_STAT_NAMES = {
     "tab_jd": "京东tab", "tab_tb": "淘宝tab", "tab_pdd": "拼多多tab", "tab_welfare": "福利清单tab",
     "redpack_tb": "淘宝红包弹层", "redpack_jd": "京东红包弹层",
     "copy": "复制文案",
+    "link_jd": "京东", "link_tb": "淘宝", "link_pdd": "拼多多", "link_welfare": "福利清单",
+    "visit": "PV", "uv": "UV",
 }
 
 
@@ -640,7 +642,8 @@ def _click_stat_fetch():
 
 
 def click_stat_tick(log=print):
-    """每天 23:00 发一次当日点击汇总（Boss 2026-10-25 明令）。监控主循环每轮调用。"""
+    """每天 23:00 发一次当日点击汇总（Boss 2026-10-25 明令）。监控主循环每轮调用。
+    Boss 2026-10-28 扩充：访问 PV/UV 单列（不算进点击合计）、卡片链接点击分平台。"""
     if time.strftime("%H:%M") < CLICK_STAT_HM:
         return
     today = time.strftime("%Y-%m-%d")
@@ -666,8 +669,12 @@ def click_stat_tick(log=print):
     def g(ev):
         return int(day.get(ev, 0) or 0)
 
-    total = sum(int(v or 0) for v in day.values())
+    # 合计只算互动类点击（访问 PV/UV 是基数不是点击，Boss 2026-10-28 明令）
+    total = sum(int(v or 0) for k, v in day.items() if k not in ("visit", "uv"))
     lines = [f"【今日点击汇总】{today[5:]}"]
+    pv, uv = g("visit"), g("uv")
+    if pv or uv:
+        lines.append(f"访问：PV {pv} | UV {uv}")
     b_jd, b_tb = g("banner_jd"), g("banner_tb")
     if b_jd or b_tb:
         lines.append(f"红包banner：京东 {b_jd} | 淘宝 {b_tb}")
@@ -675,12 +682,16 @@ def click_stat_tick(log=print):
             ("拼多多", g("tab_pdd")), ("福利清单", g("tab_welfare"))]
     if any(v for _, v in tabs):
         lines.append("平台tab：" + " | ".join(f"{n} {v}" for n, v in tabs if v))
+    lk = [("京东", g("link_jd")), ("淘宝", g("link_tb")),
+          ("拼多多", g("link_pdd")), ("福利清单", g("link_welfare"))]
+    if any(v for _, v in lk):
+        lines.append("卡片链接：" + " | ".join(f"{n} {v}" for n, v in lk if v))
     r_tb, r_jd = g("redpack_tb"), g("redpack_jd")
     if r_tb or r_jd:
         lines.append(f"红包弹层：淘宝 {r_tb} | 京东 {r_jd}")
     if g("copy"):
         lines.append(f"复制文案：{g('copy')} 次")
-    lines.append(f"今日合计 {total} 次")
+    lines.append(f"今日合计 {total} 次（不含访问）")
     msg = "\n".join(lines)
     ok, info = _send(msg, log, ext_sync=False)   # 只发主群
     st["click_stat_on"] = today

@@ -222,6 +222,8 @@ border-top-color:transparent;border-radius:50%;display:inline-block}
 .report-item{background:var(--card);border-radius:8px;box-shadow:var(--shadow);
 display:flex;flex-direction:column;overflow:hidden;transition:transform .26s,box-shadow .26s;cursor:pointer}
 .report-item:hover{transform:translateY(-6px);box-shadow:0 16px 38px 0 rgba(17,55,178,.18);z-index:5}
+/* 触摸设备：禁长按系统选择菜单，让位给「长按 0.55s 复制」（Boss 2026-10-28 明令） */
+@media(hover:none){.report-item{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}
 .image-section{position:relative;background:#f7f8fa}
 .image-section img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block}
 .image-section .noimg{aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;
@@ -336,6 +338,9 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
   var TB_KOULING='77￥ HU926 6FiQTthHJE8￥';
   // 点击统计（Boss 2026-10-25 明令）：sendBeacon 静默上报，Function 写 KV 计数
   window.stat=function(e){try{navigator.sendBeacon('/api/click?e='+encodeURIComponent(e));}catch(_){}}
+  // 页面访问统计（Boss 2026-10-28 明令）：visit=PV，uv 按「天」本地去重（localStorage 标记）
+  stat('visit');
+  try{var _uvd=new Date().toISOString().slice(0,10);if(localStorage.getItem('uvd')!==_uvd){localStorage.setItem('uvd',_uvd);stat('uv');}}catch(_){}
   function isWX(){return /MicroMessenger/i.test(navigator.userAgent);}
   function isMobile(){return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);}
   function legacyCopy(t){
@@ -570,7 +575,7 @@ function cardHtml(d){
       + '<span class="reltime">'+esc(rel(d._addedAt || d.time))+'</span></div>'
       + '<a class="cpylink" href="javascript:;" title="复制完整文案">复制文案</a>'
       + '</div>';
-    return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'" data-link="'+esc(linkOf(d))+'">'
+    return '<div class="report-item" data-plat="'+esc(d.platform)+'" data-text="'+esc(copyTextOf(d))+'" data-link="'+esc(linkOf(d))+'">'
       + '<div class="tb-wrap">'
       +   '<div class="tb-left">'+priceHtml+box+infoTb+'</div>'
       +   '<div class="tb-right">'+right+'</div>'
@@ -581,7 +586,7 @@ function cardHtml(d){
   const img = (d.images && d.images.length)
     ? '<img src="'+esc(d.images[0])+'" referrerpolicy="no-referrer" loading="lazy" alt="">'
     : '<div class="noimg">暂无图片</div>';
-  return '<div class="report-item" data-text="'+esc(copyTextOf(d))+'">'
+  return '<div class="report-item" data-plat="'+esc(d.platform)+'" data-text="'+esc(copyTextOf(d))+'">'
     + '<div class="image-section">'+img+'</div>'
     + '<div class="content-section">'
     +   '<div class="content-section-item">'
@@ -801,6 +806,47 @@ document.getElementById('btnSearch').onclick = ()=>{ kw = kwInput.value.trim(); 
 kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.trim(); render(true);} });
 
 const listEl = document.getElementById('list');
+listEl.addEventListener('click', e=>{
+  // 卡片链接点击统计（Boss 2026-10-28 明令）：上报后放行默认跳转，不阻断用户
+  const la = e.target.closest('a.lnki, a.wf-btn');
+  if(la){
+    const card = la.closest('.report-item');
+    const plat = (card && card.dataset.plat) || (la.classList.contains('wf-btn') ? 'welfare' : 'unk');
+    stat('link_'+({'2':'jd','1':'tb','4':'pdd'}[plat]||plat));
+  }
+  // 福利卡口令：点击复制淘口令
+  const tp = e.target.closest('.wf-tpwd');
+  if(tp){
+    e.stopPropagation(); e.preventDefault();
+    copy(tp.dataset.tpwd || '', '口令已复制，打开淘宝App粘贴 ✓');
+    return;
+  }
+  const c = e.target.closest('.cpylink');
+  if(c){
+    e.stopPropagation(); e.preventDefault();
+    const card = c.closest('.report-item');
+    stat('copy');
+    copy((card && card.dataset.text) || '', '文案已复制 ✓');
+    return;
+  }
+  // 图片点击放大（灯箱），点空白处关闭
+  if(e.target.tagName==='IMG' && e.target.closest('.report-item')){
+    e.stopPropagation(); e.preventDefault();
+    const lb = document.getElementById('lightbox');
+    lb.innerHTML = '<img src="'+e.target.src+'" referrerpolicy="no-referrer" alt="">';
+    lb.classList.add('show');
+  }
+});
+// 移动端长按复制（Boss 2026-10-28 明令）：手机双击=缩放触发不了 dblclick，长按 0.55s 复制
+var lpT=null;
+listEl.addEventListener('touchstart',function(e){
+  if(e.target.closest('a')||e.target.tagName==='IMG') return;
+  var card=e.target.closest('.report-item'); if(!card) return;
+  lpT=setTimeout(function(){ lpT=null; stat('copy'); copy(card.dataset.text,'文案已复制 ✓'); },550);
+},{passive:true});
+['touchend','touchmove','touchcancel'].forEach(function(ev){
+  listEl.addEventListener(ev,function(){ if(lpT){clearTimeout(lpT);lpT=null;} },{passive:true});
+});
 listEl.addEventListener('dblclick', e=>{
   if(e.target.closest('a') || e.target.tagName==='IMG') return;
   const card = e.target.closest('.report-item'); if(!card) return;
