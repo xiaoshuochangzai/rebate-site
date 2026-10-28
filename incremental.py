@@ -233,19 +233,20 @@ def drain_tb_done(deals, have_ids):
                         _sell2_seen_save()
                         n_s2 += 1
                         log(f"2小时热销新品已入外部群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
-                        # Boss 2026-10-28 明令：猫超新品同步发主群（外部群逻辑不变，普通2h热销不同步）。
+                        # Boss 2026-10-29 明令：主群淘宝线报源调整为「猫超佣金膨胀 + 2小时热销」，
+                        # 双榜成品都同步主群（猫超标【天猫超市】，2h 标【淘宝】）；外部群逻辑不变。
                         # 构造同构 deal 塞 KW_QUEUE，由 keyword_push 按节流/配额/陈旧过滤正常推主群；
                         # _mctag 让主群消息开头标【天猫超市】而不是【淘宝】。
-                        if payload.get("_maochao"):
-                            try:
-                                payload["_kind"] = "mc"  # to_deal 认 _kind 选前缀，否则 KeyError
-                                deal_mc = dtk_bitui.to_deal(payload, out)
-                                deal_mc["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                                deal_mc["_mctag"] = 1
-                                KW_QUEUE.append(deal_mc)
-                                log(f"猫超新品已同步主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
-                            except Exception as e:
-                                log(f"猫超同步主群异常 {gid}：{str(e)[:80]}")
+                        mc = bool(payload.get("_maochao"))
+                        try:
+                            payload["_kind"] = "mc" if mc else "sell2"  # to_deal 认 _kind 选前缀，否则 KeyError
+                            deal_g = dtk_bitui.to_deal(payload, out)
+                            deal_g["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                            deal_g["_mctag"] = 1 if mc else 0
+                            KW_QUEUE.append(deal_g)
+                            log(f"{'猫超' if mc else '2小时热销'}新品已同步主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                        except Exception as e:
+                            log(f"双榜同步主群异常 {gid}：{str(e)[:80]}")
                     else:
                         log(f"2小时热销 {gid} wecom_ext 未加载，本轮跳过（不标 seen，下轮重试）")
                 else:
@@ -553,6 +554,7 @@ def poll_bitui():
     # Boss 2026-10-13 明令（方案B）：三榜转链也挪后台线程，这里只发现+入队；
     # seen 在 drain_tb_done 转链成功后才标（失败的留在池内下轮重试，同原逻辑）
     got = 0
+    n_low = 0
     for lst in lists:
         for it in lst:
             if got >= BITUI_MAX_PER_ROUND:
@@ -560,6 +562,11 @@ def poll_bitui():
             gid = str(it.get("id"))
             if gid in seen:
                 continue  # 跨榜去重：任一榜见过的 id 直接跳过
+            # Boss 2026-10-29 明令：主群淘宝线报同样执行 4 元佣金门槛（与外部群同一把尺）
+            # 低于门槛不标 seen（日后佣金涨过线还能捞起来），也不占后台转链名额
+            if not _tb_comm_ok(it):
+                n_low += 1
+                continue
             if not _tb_inflight_add(gid):
                 continue  # 已在后台转链中，防重复入队
             TB_JOBS.put(("bitui", it))
@@ -567,11 +574,14 @@ def poll_bitui():
             log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]}新品 {gid} | {it.get('d_title', '')[:26]}（已排入后台转链）")
         if got >= BITUI_MAX_PER_ROUND:
             break
+    if n_low:
+        log(f"三榜佣金门槛过滤 {n_low} 条（预估佣金<4元，不发主群）")
     return got
 
 
 def _tb_comm_ok(it):
-    """外部群佣金门槛（Boss 2026-10-27 明令，2026-10-29 提高到 4 元）：预估佣金 >= 4 元才发。
+    """淘宝线报佣金门槛（Boss 2026-10-27 明令起，2026-10-29 提高到 4 元并覆盖主群）：
+    预估佣金 >= 4 元才发（主群三榜 + 外部群双榜同一把尺）。
     页面口径：佣金金额 = commission_rate × price / 100（rate 已含膨胀补贴，
     实测 39.9×15.35%=6.12 与大淘客页面显示一致）。字段缺失/解析失败按 0 处理（不发）。"""
     try:
@@ -649,7 +659,7 @@ def poll_sell2():
     for it in s2:
         _try_put(it, False)
     if n_low:
-        log(f"外部群佣金门槛过滤 {n_low} 条（预估佣金≤1元，不发群）")
+        log(f"外部群佣金门槛过滤 {n_low} 条（预估佣金<4元，不发群）")
     return got
 
 
