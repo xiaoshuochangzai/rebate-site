@@ -233,6 +233,19 @@ def drain_tb_done(deals, have_ids):
                         _sell2_seen_save()
                         n_s2 += 1
                         log(f"2小时热销新品已入外部群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                        # Boss 2026-10-28 明令：猫超新品同步发主群（外部群逻辑不变，普通2h热销不同步）。
+                        # 构造同构 deal 塞 KW_QUEUE，由 keyword_push 按节流/配额/陈旧过滤正常推主群；
+                        # _mctag 让主群消息开头标【天猫超市】而不是【淘宝】。
+                        if payload.get("_maochao"):
+                            try:
+                                payload["_kind"] = "mc"  # to_deal 认 _kind 选前缀，否则 KeyError
+                                deal_mc = dtk_bitui.to_deal(payload, out)
+                                deal_mc["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                                deal_mc["_mctag"] = 1
+                                KW_QUEUE.append(deal_mc)
+                                log(f"猫超新品已同步主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                            except Exception as e:
+                                log(f"猫超同步主群异常 {gid}：{str(e)[:80]}")
                     else:
                         log(f"2小时热销 {gid} wecom_ext 未加载，本轮跳过（不标 seen，下轮重试）")
                 else:

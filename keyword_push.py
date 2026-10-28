@@ -783,8 +783,10 @@ def flush(deals, log=print):
             continue
         tb_cnt = _bump_tb_sent()   # 独立计数，重启接着数（与京东 sent_cnt 分开）
         tail = "\n" + TB_FOOTER if tb_cnt % TB_FOOTER_EVERY == 0 else ""
-        ok, msg = _send(TB_TAG + t + tail, log, ext_sync=not _sell2_on())
-        msgs.append(f"淘宝1条({'带尾' if tail else '无尾'})({msg})")
+        # Boss 2026-10-28 明令：猫超佣金膨胀新品主群开头标【天猫超市】，其余【淘宝】
+        mct = bool(d.get("_mctag"))
+        ok, msg = _send(("【天猫超市】" if mct else TB_TAG) + t + tail, log, ext_sync=not _sell2_on())
+        msgs.append(f"{'天猫超市' if mct else '淘宝'}1条({'带尾' if tail else '无尾'})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))
             ok_any = True
