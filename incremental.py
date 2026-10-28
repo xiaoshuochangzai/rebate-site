@@ -571,13 +571,13 @@ def poll_bitui():
 
 
 def _tb_comm_ok(it):
-    """外部群佣金门槛（Boss 2026-10-27 明令）：预估佣金 > 1 元才发。
+    """外部群佣金门槛（Boss 2026-10-27 明令，2026-10-29 提高到 4 元）：预估佣金 >= 4 元才发。
     页面口径：佣金金额 = commission_rate × price / 100（rate 已含膨胀补贴，
     实测 39.9×15.35%=6.12 与大淘客页面显示一致）。字段缺失/解析失败按 0 处理（不发）。"""
     try:
         rate = float(it.get("commission_rate") or 0)
         price = float(it.get("price") or 0)
-        return rate * price / 100.0 > 1.0
+        return rate * price / 100.0 >= 4.0
     except Exception:
         return False
 
@@ -591,7 +591,7 @@ def poll_sell2():
       - 猫超来的商品标注【天猫超市】，2小时热销的保持【淘宝】
       - 同轮两榜都有的商品猫超优先
       - 两榜共享单轮 2 条配额（猫超优先）
-      - 佣金门槛：预估佣金 >1 元才发（_tb_comm_ok，两榜同规则）
+      - 佣金门槛：预估佣金 >=4 元才发（_tb_comm_ok，两榜同规则；Boss 2026-10-29 明令从 1 元提高）
     首跑建基线全跳过（防一次性轰炸）；seen_sell2.json 两榜共用一份 id 池
     （同体系 dataoke 商品 id，天然交叉去重）。
     转链复用 dtk_bitui.convert_item（品带超红通路优先，退 get-privilege）。
@@ -632,7 +632,7 @@ def poll_sell2():
         if not gid or gid in seen or gid in mc_ids:
             return
         if not _tb_comm_ok(it):
-            n_low += 1  # 佣金≤1元不发群；不标 seen（日后佣金膨胀涨过线还能捞起来）
+            n_low += 1  # 佣金<4元不发群；不标 seen（日后佣金膨胀涨过线还能捞起来）
             return
         if not _tb_inflight_add(gid):
             return  # 已在后台转链中，防重复入队
