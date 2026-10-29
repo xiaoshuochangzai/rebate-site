@@ -142,11 +142,13 @@ def _tb_worker():
                 if conv and conv.get("tpwd"):
                     if kind == "refill":  # 高佣补位：成品回流独立分支，不走 sell2 的外部群链路
                         TB_DONE.put(("refill", payload, conv))
+                    elif kind == "refill_mc":  # 猫超轮播：直发主群，同样独立回流
+                        TB_DONE.put(("refill_mc", payload, conv))
                     else:
                         TB_DONE.put((("sell2" if kind == "sell2" else "bitui"), payload, conv))
                     ok_flag = True
                 else:
-                    log(f"{('高佣补位' if kind == 'refill' else '三榜')} {k} 后台转链失败（无淘口令），下轮重试")
+                    log(f"{('高佣补位' if kind == 'refill' else ('猫超轮播' if kind == 'refill_mc' else '三榜'))} {k} 后台转链失败（无淘口令），下轮重试")
         except Exception as e:
             log(f"淘宝后台转链异常：{str(e)[:100]}")
         finally:
@@ -159,7 +161,13 @@ def _tb_worker():
                 elif kind == "pdd":
                     _tb_inflight_discard(str(payload.get("goods_id") or payload.get("goods_sign") or ""))
                 else:
-                    _tb_inflight_discard(("rf_" + str(payload.get("id") or "")) if kind == "refill" else str(payload.get("id") or ""))
+                    _pid = str(payload.get("id") or "")
+                    if kind == "refill":
+                        _tb_inflight_discard("rf_" + _pid)
+                    elif kind == "refill_mc":
+                        _tb_inflight_discard("mcr_" + _pid)
+                    else:
+                        _tb_inflight_discard(_pid)
             TB_JOBS.task_done()
         time.sleep(3)  # 条间间隔防风控（沿用原 poll 节奏）
 
@@ -251,6 +259,7 @@ def drain_tb_done(deals, have_ids):
                                 deal_g["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
                                 deal_g["_mctag"] = 1 if mc else 0
                                 KW_QUEUE.append(deal_g)
+                                _mc_refill_touch(gid)  # 新品已推主群，轮播池同步刷新防扎堆
                                 log(f"{'猫超' if mc else '2小时热销'}新品已同步主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
                         except Exception as e:
                             log(f"双榜同步主群异常 {gid}：{str(e)[:80]}")
@@ -280,6 +289,35 @@ def drain_tb_done(deals, have_ids):
                 log(f"高佣补位异常 {gid}：{str(e)[:80]}")
             finally:
                 _tb_inflight_discard("rf_" + gid)
+        elif kind == "refill_mc":
+            # Boss 2026-10-29 明令：猫超高佣轮播直发主群（每 5 分钟 3 条，没新货轮播旧的）。
+            # 绕过 flush 配额/节流，但夜闸与红包静默照守；不上站、不进外部群（外部群猫超有自己的链路）。
+            gid = str(payload.get("id") or "")
+            try:
+                if out and out.get("tpwd"):
+                    hhmm = time.strftime("%H:%M")
+                    if keyword_push and hhmm >= keyword_push.NIGHTGATE_HM:
+                        log(f"猫超轮播 {gid} 撞夜闸（{hhmm}），本轮放弃")
+                    elif keyword_push and keyword_push.redpack_mute():
+                        log(f"猫超轮播 {gid} 撞红包静默窗，本轮放弃")
+                    else:
+                        global _mc_refill_tail_cnt
+                        text = dtk_bitui.build_text(payload, out)
+                        _mc_refill_tail_cnt += 1
+                        if _mc_refill_tail_cnt % 2 == 0:
+                            text += SELL2_TAIL  # 与主群淘宝站尾同款，每 2 条一次
+                        ok, msg = keyword_push._send("【天猫超市】" + text, log=log, ext_sync=False)
+                        if ok:
+                            _mc_refill_touch(gid)  # 轮播成功，刷新时间戳实现游标轮转
+                            log(f"猫超轮播已直发主群 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                        else:
+                            log(f"猫超轮播直发失败 {gid}：{msg[:60]}（时间戳不动，下轮可再选）")
+                else:
+                    log(f"猫超轮播 {gid} 无淘口令，本轮放弃")
+            except Exception as e:
+                log(f"猫超轮播异常 {gid}：{str(e)[:80]}")
+            finally:
+                _tb_inflight_discard("mcr_" + gid)
         else:
             gid = str(payload.get("id") or "")
             try:
@@ -728,6 +766,87 @@ def refill_register(s2_list, log=print):
             log(f"高佣补位池：新增 {n_new} 条（池内 {len(pool)} 条）")
 
 
+# ---- 猫超高佣轮播（Boss 2026-10-29 明令）：猫超每 5 分钟 3 条高佣，没有新的符合要求的
+# 进来就轮播旧的高佣（游标轮转：最久没发的优先、同分取高佣），直发主群不走 flush 配额。
+MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
+MC_REFILL_INTERVAL_SEC = 300   # 每 5 分钟一轮
+MC_REFILL_PER_TICK = 3         # 每轮 3 条
+MC_REFILL_KEEP_TOP = 60
+_mc_refill_cache = None
+_mc_refill_last = 0.0
+_mc_refill_tail_cnt = 0        # 轮播站尾计数（每 2 条带一次，内存即可，重启清零无碍）
+
+
+def _mc_refill_pool():
+    global _mc_refill_cache
+    if _mc_refill_cache is None:
+        _mc_refill_cache = load_json(MC_REFILL_FILE, {})
+    return _mc_refill_cache
+
+
+def _mc_refill_touch(gid, ts=None):
+    """商品被轮播（或作为新品推过主群）后刷新时间戳，防扎堆重复。"""
+    pool = _mc_refill_pool()
+    if str(gid) in pool:
+        pool[str(gid)]["ts"] = ts if ts is not None else time.time()
+
+
+def mc_refill_register(mc_list, log=print):
+    """poll_sell2 每轮把猫超榜过 4 元门槛的商品登记进轮播池。"""
+    pool = _mc_refill_pool()
+    n_new = 0
+    for it in mc_list:
+        try:
+            gid = str(it.get("id") or "")
+            if not gid or gid in pool or not _tb_comm_ok(it):
+                continue
+            it["_kind"] = "mc"
+            comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
+            pool[gid] = {
+                "comm": round(comm, 2), "ts": 0,
+                "it": {k: it.get(k) for k in ("id", "goodsid", "d_title", "title", "price",
+                                              "original_price", "coupon_amount", "coupon_id",
+                                              "main_pic", "shop_name", "add_time",
+                                              "commission_rate", "subsidy_rate", "_kind")},
+            }
+            n_new += 1
+        except Exception:
+            continue
+    if len(pool) > MC_REFILL_KEEP_TOP:
+        # 超限砍佣金最低的，保留高佣 + 最久没发的都会因高佣留下
+        keep = {gid: v for gid, v in sorted(pool.items(), key=lambda kv: kv[1].get("comm", 0), reverse=True)[:MC_REFILL_KEEP_TOP]}
+        pool.clear()
+        pool.update(keep)
+    if pool:
+        save_json(MC_REFILL_FILE, pool)
+        if n_new:
+            log(f"猫超轮播池：新增 {n_new} 条（池内 {len(pool)} 条）")
+
+
+def mc_refill_tick(log=print):
+    """猫超轮播调度：每 5 分钟挑 3 条（最久没发优先、同分取高佣）排后台转链。"""
+    global _mc_refill_last
+    now = time.time()
+    if now - _mc_refill_last < MC_REFILL_INTERVAL_SEC:
+        return
+    _mc_refill_last = now
+    pool = _mc_refill_pool()
+    cand = []
+    for gid, v in pool.items():
+        if _tb_inflight_add("mcr_" + str(gid)):
+            cand.append((gid, v))
+    if not cand:
+        return  # 池空或全在转链中
+    cand.sort(key=lambda kv: (kv[1].get("ts") or 0, -kv[1].get("comm", 0)))
+    picked = cand[:MC_REFILL_PER_TICK]
+    for gid, v in picked:
+        it = dict(v.get("it") or {})
+        it["_kind"] = "mc"
+        TB_JOBS.put(("refill_mc", it))
+        log(f"猫超轮播调度：{gid} 佣金{v.get('comm', 0):.1f}元 | {(it.get('d_title') or '')[:22]}")
+    # 池里掉出榜的高佣旧货清理：只保留当前在榜登记过的 + 最近轮播的（自然由 register 刷新，不额外删）
+
+
 def poll_sell2():
     """大淘客2小时热销榜 + 猫超佣金膨胀双榜（top_sell2 / xp/1111 页面）——双11 期间只推外部群。
 
@@ -758,6 +877,7 @@ def poll_sell2():
     s2 = _pull("sell2")
     try:
         refill_register(s2, log=log)  # Boss 2026-10-29 明令：2h 高佣商品进间隔补位池
+        mc_refill_register(mc, log=log)  # Boss 2026-10-29 明令：猫超高佣进 5 分钟轮播池
     except Exception as e:
         log(f"补位池登记异常：{str(e)[:80]}")
     if not mc and not s2:
@@ -1136,6 +1256,12 @@ def main():
                 refill_tick(log)
             except Exception as e:
                 log(f"高佣补位调度异常：{str(e)[:80]}")
+
+            # 猫超高佣轮播调度（Boss 2026-10-29 明令）：每 5 分钟 3 条，没新货轮播旧的高佣
+            try:
+                mc_refill_tick(log)
+            except Exception as e:
+                log(f"猫超轮播调度异常：{str(e)[:80]}")
 
             # 好单库拼多多新品（2026-10-18 接入：新商品转链后上站第三 tab）
             try:
