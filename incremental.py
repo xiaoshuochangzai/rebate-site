@@ -140,10 +140,13 @@ def _tb_worker():
                 k = str(payload.get("id") or "")
                 conv = dtk_bitui.convert_item(payload)
                 if conv and conv.get("tpwd"):
-                    TB_DONE.put((("sell2" if kind == "sell2" else "bitui"), payload, conv))
+                    if kind == "refill":  # 高佣补位：成品回流独立分支，不走 sell2 的外部群链路
+                        TB_DONE.put(("refill", payload, conv))
+                    else:
+                        TB_DONE.put((("sell2" if kind == "sell2" else "bitui"), payload, conv))
                     ok_flag = True
                 else:
-                    log(f"三榜 {k} 后台转链失败（无淘口令），下轮重试")
+                    log(f"{('高佣补位' if kind == 'refill' else '三榜')} {k} 后台转链失败（无淘口令），下轮重试")
         except Exception as e:
             log(f"淘宝后台转链异常：{str(e)[:100]}")
         finally:
@@ -156,7 +159,7 @@ def _tb_worker():
                 elif kind == "pdd":
                     _tb_inflight_discard(str(payload.get("goods_id") or payload.get("goods_sign") or ""))
                 else:
-                    _tb_inflight_discard(str(payload.get("id") or ""))
+                    _tb_inflight_discard(("rf_" + str(payload.get("id") or "")) if kind == "refill" else str(payload.get("id") or ""))
             TB_JOBS.task_done()
         time.sleep(3)  # 条间间隔防风控（沿用原 poll 节奏）
 
@@ -259,6 +262,24 @@ def drain_tb_done(deals, have_ids):
                 log(f"2小时热销成品处理异常 {gid}：{str(e)[:80]}")
             finally:
                 _tb_inflight_discard(gid)
+        elif kind == "refill":
+            # Boss 2026-10-29 明令：2小时热销高佣商品间隔式补位主群（猫超供给少）。
+            # 只进主群（KW_QUEUE），不上站、不进外部群；id 带时间戳绕开 pushed 去重实现合法重发。
+            gid = str(payload.get("id") or "")
+            try:
+                if out and out.get("tpwd"):
+                    deal = dtk_bitui.to_deal(payload, out)  # payload._kind=sell2，取文案与字段
+                    deal["id"] = f"rf_{gid}_{int(time.time())}"
+                    deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")  # 防陈旧过滤误杀
+                    deal["_mctag"] = 0  # 补位的是 2h 榜商品，主群标【淘宝】
+                    KW_QUEUE.append(deal)
+                    log(f"高佣补位已进主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                else:
+                    log(f"高佣补位 {gid} 无淘口令，本轮放弃")
+            except Exception as e:
+                log(f"高佣补位异常 {gid}：{str(e)[:80]}")
+            finally:
+                _tb_inflight_discard("rf_" + gid)
         else:
             gid = str(payload.get("id") or "")
             try:
@@ -630,6 +651,83 @@ def _tb_comm_ok(it):
         return False
 
 
+# ---- 2小时热销高佣补位（Boss 2026-10-29 明令）：猫超供给少，主群用 2h 榜高佣商品
+# 间隔式补位（非批量一次性发）——每 REFILL_INTERVAL_SEC 挑佣金最高且过冷却的一条转链推主群。
+REFILL_FILE = os.path.join(BASE_DIR, "tb_refill.json")
+REFILL_INTERVAL_SEC = 600        # 每 10 分钟最多补位 1 条（间隔式节奏，Boss 可调）
+REFILL_COOLDOWN_SEC = 6 * 3600   # 同一商品 6 小时内不重发（防 Boss 刚抱怨过的重复）
+REFILL_KEEP_TOP = 60             # 池子只留佣金最高的 60 条，防无限膨胀
+_refill_pool_cache = None
+_refill_last = 0.0
+
+
+def _refill_pool():
+    global _refill_pool_cache
+    if _refill_pool_cache is None:
+        _refill_pool_cache = load_json(REFILL_FILE, {})
+    return _refill_pool_cache
+
+
+def _refill_pool_trim_save():
+    global _refill_pool_cache
+    pool = _refill_pool()
+    if len(pool) > REFILL_KEEP_TOP:
+        top = sorted(pool.items(), key=lambda kv: kv[1].get("comm", 0), reverse=True)[:REFILL_KEEP_TOP]
+        pool.clear()
+        pool.update(dict(top))
+    save_json(REFILL_FILE, pool)
+
+
+def refill_tick(log=print):
+    """补位调度：到点从池里挑佣金最高且过冷却的一条，排后台转链后推主群。"""
+    global _refill_last
+    now = time.time()
+    if now - _refill_last < REFILL_INTERVAL_SEC:
+        return
+    _refill_last = now
+    pool = _refill_pool()
+    cand = []
+    for gid, v in pool.items():
+        if now - (v.get("ts") or 0) >= REFILL_COOLDOWN_SEC and _tb_inflight_add("rf_" + str(gid)):
+            cand.append((gid, v))
+    if not cand:
+        return  # 池空或全在冷却，本轮跳过
+    gid, v = max(cand, key=lambda kv: kv[1].get("comm", 0))
+    v["ts"] = now
+    _refill_pool_trim_save()
+    it = dict(v.get("it") or {})
+    it["_kind"] = "sell2"
+    TB_JOBS.put(("refill", it))
+    log(f"高佣补位调度：{gid} 佣金{v.get('comm', 0):.1f}元 | {(it.get('d_title') or '')[:22]}（每{REFILL_INTERVAL_SEC // 60}分钟最多1条）")
+
+
+def refill_register(s2_list, log=print):
+    """poll_sell2 每轮把 2h 榜过 4 元门槛的商品登记进补位池（不影响新品/seen 逻辑）。"""
+    pool = _refill_pool()
+    n_new = 0
+    for it in s2_list:
+        try:
+            gid = str(it.get("id") or "")
+            if not gid or gid in pool or not _tb_comm_ok(it):
+                continue
+            it["_kind"] = "sell2"
+            comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
+            pool[gid] = {
+                "comm": round(comm, 2), "ts": 0,
+                "it": {k: it.get(k) for k in ("id", "goodsid", "d_title", "title", "price",
+                                              "original_price", "coupon_amount", "coupon_id",
+                                              "main_pic", "shop_name", "add_time",
+                                              "commission_rate", "subsidy_rate", "_kind")},
+            }
+            n_new += 1
+        except Exception:
+            continue
+    if pool:
+        _refill_pool_trim_save()
+        if n_new:
+            log(f"高佣补位池：新增 {n_new} 条（池内 {len(pool)} 条）")
+
+
 def poll_sell2():
     """大淘客2小时热销榜 + 猫超佣金膨胀双榜（top_sell2 / xp/1111 页面）——双11 期间只推外部群。
 
@@ -658,6 +756,10 @@ def poll_sell2():
 
     mc = _pull("mc")
     s2 = _pull("sell2")
+    try:
+        refill_register(s2, log=log)  # Boss 2026-10-29 明令：2h 高佣商品进间隔补位池
+    except Exception as e:
+        log(f"补位池登记异常：{str(e)[:80]}")
     if not mc and not s2:
         return 0
     MARK = "_s2base"
@@ -1028,6 +1130,12 @@ def main():
                 poll_sell2()
             except Exception as e:
                 log(f"2小时热销榜轮询异常：{str(e)[:100]}")
+
+            # 高佣补位调度（Boss 2026-10-29 明令）：每 10 分钟从补位池挑佣金最高的 1 条转链补主群
+            try:
+                refill_tick(log)
+            except Exception as e:
+                log(f"高佣补位调度异常：{str(e)[:80]}")
 
             # 好单库拼多多新品（2026-10-18 接入：新商品转链后上站第三 tab）
             try:
