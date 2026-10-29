@@ -239,12 +239,16 @@ def drain_tb_done(deals, have_ids):
                         # _mctag 让主群消息开头标【天猫超市】而不是【淘宝】。
                         mc = bool(payload.get("_maochao"))
                         try:
-                            payload["_kind"] = "mc" if mc else "sell2"  # to_deal 认 _kind 选前缀，否则 KeyError
-                            deal_g = dtk_bitui.to_deal(payload, out)
-                            deal_g["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                            deal_g["_mctag"] = 1 if mc else 0
-                            KW_QUEUE.append(deal_g)
-                            log(f"{'猫超' if mc else '2小时热销'}新品已同步主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                            # 跨体系去重：该商品若已从三榜推过主群，这里不再重复推
+                            if not _tb_main_gid_add(gid):
+                                log(f"跨榜去重：{gid} 已从其他榜推过主群，跳过")
+                            else:
+                                payload["_kind"] = "mc" if mc else "sell2"  # to_deal 认 _kind 选前缀，否则 KeyError
+                                deal_g = dtk_bitui.to_deal(payload, out)
+                                deal_g["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                                deal_g["_mctag"] = 1 if mc else 0
+                                KW_QUEUE.append(deal_g)
+                                log(f"{'猫超' if mc else '2小时热销'}新品已同步主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
                         except Exception as e:
                             log(f"双榜同步主群异常 {gid}：{str(e)[:80]}")
                     else:
@@ -264,7 +268,12 @@ def drain_tb_done(deals, have_ids):
                     # 必须补打 _addedAt，否则 keyword_push 的 30 分钟陈旧过滤会把它们
                     # 全部误杀成「积压」（2026-10-13 实锤：26 条只漏推 1 条的根因）
                     deal["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                    KW_QUEUE.append(deal)
+                    # 跨体系去重：该商品若已从双榜推过主群，只记 seen 不再入主群队列
+                    if _tb_main_gid_add(gid):
+                        KW_QUEUE.append(deal)
+                        log(f"三榜新品已转链待推 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                    else:
+                        log(f"跨榜去重：三榜 {gid} 已从双榜推过主群，跳过")
                     _bitui_seen().add(gid)
                     _bitui_seen_save()
                     n_bit += 1
@@ -577,6 +586,45 @@ def poll_bitui():
     if n_low:
         log(f"三榜佣金门槛过滤 {n_low} 条（预估佣金<4元，不发主群）")
     return got
+
+
+# ---- 主群跨体系去重（Boss 2026-10-29 反馈「淘宝线报总是重复」）----
+# 根因：三榜（bt_/ts_/tt_）与双榜（s2_/mc_）是两套榜单两套 id 前缀，同一商品两边都收时
+# keyword_push 按 deal id 去重不命中 → 主群同一商品推两次（2026-10-29 实锤：
+# 46434416 韩束护手霜 08:33 从热销榜、08:33:59 从 2小时热销榜各排入一次）。
+# 修法：主群侧无论从哪个榜来，同一 dtk 商品 gid 只推一次；外部群不在此列（两群独立）。
+TB_MAIN_GID_FILE = os.path.join(BASE_DIR, "tb_main_gid.json")
+_tb_main_gid_cache = None
+
+
+def _tb_main_gid():
+    global _tb_main_gid_cache
+    if _tb_main_gid_cache is None:
+        _tb_main_gid_cache = load_json(TB_MAIN_GID_FILE, {})
+    return _tb_main_gid_cache
+
+
+def _tb_main_gid_add(gid):
+    """主群跨体系查重：gid 未推过返回 True 并登记；已推过返回 False。"""
+    global _tb_main_gid_cache
+    pool = _tb_main_gid()
+    gid = str(gid)
+    if not gid or gid in pool:
+        return False
+    now = time.time()
+    pool[gid] = now
+    if len(pool) > 20000:  # 防无限膨胀：先裁 7 天前的，仍超再砍最旧一半
+        cutoff = now - 7 * 86400
+        for k in [k for k, v in pool.items() if v < cutoff]:
+            pool.pop(k, None)
+        if len(pool) > 20000:
+            for k, _ in sorted(pool.items(), key=lambda kv: kv[1])[: len(pool) // 2]:
+                pool.pop(k, None)
+    try:
+        save_json(TB_MAIN_GID_FILE, pool)
+    except Exception:
+        _tb_main_gid_cache = None  # 写盘失败丢弃缓存，下轮重读，宁重复不丢
+    return True
 
 
 def _tb_comm_ok(it):
