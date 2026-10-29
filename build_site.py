@@ -31,11 +31,14 @@ PLATFORM_MAP = {"1": "淘宝", "2": "京东", "3": "飞猪", "4": "拼多多"}
 ONLY_PLATFORMS = {"1", "2", "4"}
 
 
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 好单库是国内 API，强制直连不走系统代理（Clash 抖动时 10061 会把京东线报流整个打断，2026-10-29 实锤断供 1 小时）
+
+
 def fetch_page(cfg, page_no, timeout=12):
     url = (f"{cfg['crawl']['source']}?page_no={page_no}"
            f"&page_size={cfg['crawl']['page_size']}&is_images=1")
     req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _DIRECT_OPENER.open(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
