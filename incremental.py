@@ -562,29 +562,19 @@ def poll_bitui():
         return 0
     # Boss 2026-10-13 明令（方案B）：三榜转链也挪后台线程，这里只发现+入队；
     # seen 在 drain_tb_done 转链成功后才标（失败的留在池内下轮重试，同原逻辑）
-    got = 0
-    n_low = 0
+    # Boss 2026-10-29 明令：主群淘宝线报只推双榜（2小时热销 + 猫超佣金膨胀），三榜停推。
+    # 三榜新品照常记 seen（防日后恢复三榜时旧货一次性倾泻），但不再转链、不进主群。
+    n_new = 0
     for lst in lists:
         for it in lst:
-            if got >= BITUI_MAX_PER_ROUND:
-                break
             gid = str(it.get("id"))
-            if gid in seen:
-                continue  # 跨榜去重：任一榜见过的 id 直接跳过
-            # Boss 2026-10-29 明令：主群淘宝线报同样执行 4 元佣金门槛（与外部群同一把尺）
-            # 低于门槛不标 seen（日后佣金涨过线还能捞起来），也不占后台转链名额
-            if not _tb_comm_ok(it):
-                n_low += 1
-                continue
-            if not _tb_inflight_add(gid):
-                continue  # 已在后台转链中，防重复入队
-            TB_JOBS.put(("bitui", it))
-            got += 1
-            log(f"{dtk_bitui.RANKS[it.get('_kind') or 'bitui'][2]}新品 {gid} | {it.get('d_title', '')[:26]}（已排入后台转链）")
-        if got >= BITUI_MAX_PER_ROUND:
-            break
-    if n_low:
-        log(f"三榜佣金门槛过滤 {n_low} 条（预估佣金<4元，不发主群）")
+            if gid and gid not in seen:
+                seen.add(gid)
+                n_new += 1
+    if n_new:
+        _bitui_seen_save()
+        log(f"三榜已停推（主群只走双榜）：{n_new} 条新品仅记档跳过")
+    return 0
     return got
 
 
