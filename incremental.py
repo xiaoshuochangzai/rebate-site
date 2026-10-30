@@ -726,19 +726,21 @@ def refill_tick(log=print):
         return
     _refill_last = now
     pool = _refill_pool()
-    cand = []
-    for gid, v in pool.items():
-        if now - (v.get("ts") or 0) >= REFILL_COOLDOWN_SEC and _tb_inflight_add("rf_" + str(gid)):
-            cand.append((gid, v))
-    if not cand:
-        return  # 池空或全在冷却，本轮跳过
-    gid, v = max(cand, key=lambda kv: kv[1].get("comm", 0))
-    v["ts"] = now
-    _refill_pool_trim_save()
-    it = dict(v.get("it") or {})
-    it["_kind"] = "sell2"
-    TB_JOBS.put(("refill", it))
-    log(f"高佣补位调度：{gid} 佣金{v.get('comm', 0):.1f}元 | {(it.get('d_title') or '')[:22]}（每{REFILL_INTERVAL_SEC // 60}分钟最多1条）")
+    # 只对「本轮真正选中」的占坑（2026-10-30 实锤踩坑：先全池占坑再挑，未选中的
+    # inflight 永不释放 → 池子萎缩到永远只剩最早那几条，Boss 看到的「全是重复」）
+    cand = [(gid, v) for gid, v in pool.items()
+            if now - (v.get("ts") or 0) >= REFILL_COOLDOWN_SEC]
+    cand.sort(key=lambda kv: kv[1].get("comm", 0), reverse=True)
+    for gid, v in cand:
+        if _tb_inflight_add("rf_" + str(gid)):
+            v["ts"] = now
+            _refill_pool_trim_save()
+            it = dict(v.get("it") or {})
+            it["_kind"] = "sell2"
+            TB_JOBS.put(("refill", it))
+            log(f"高佣补位调度：{gid} 佣金{v.get('comm', 0):.1f}元 | {(it.get('d_title') or '')[:22]}（每{REFILL_INTERVAL_SEC // 60}分钟最多1条）")
+            return
+    # 池空或全在冷却，本轮跳过
 
 
 def refill_register(s2_list, log=print):
@@ -834,20 +836,21 @@ def mc_refill_tick(log=print):
         return
     _mc_refill_last = now
     pool = _mc_refill_pool()
-    cand = []
-    for gid, v in pool.items():
-        if _tb_inflight_add("mcr_" + str(gid)):
-            cand.append((gid, v))
-    if not cand:
-        return  # 池空或全在转链中
+    # 只对「本轮真正选中」的占坑（同 refill_tick 的踩坑修复：全池占坑会让
+    # 未选中的 inflight 永不释放，轮转卡死成永远同 3 条）
+    cand = [(gid, v) for gid, v in pool.items()]
     cand.sort(key=lambda kv: (kv[1].get("ts") or 0, -kv[1].get("comm", 0)))
-    picked = cand[:MC_REFILL_PER_TICK]
-    for gid, v in picked:
-        it = dict(v.get("it") or {})
-        it["_kind"] = "mc"
-        TB_JOBS.put(("refill_mc", it))
-        log(f"猫超轮播调度：{gid} 佣金{v.get('comm', 0):.1f}元 | {(it.get('d_title') or '')[:22]}")
-    # 池里掉出榜的高佣旧货清理：只保留当前在榜登记过的 + 最近轮播的（自然由 register 刷新，不额外删）
+    picked = 0
+    for gid, v in cand:
+        if picked >= MC_REFILL_PER_TICK:
+            break
+        if not _tb_inflight_add("mcr_" + str(gid)):
+            continue  # 上一轮的还在转链中，跳过选下一条
+        TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
+        picked += 1
+        log(f"猫超轮播调度：{gid} 佣金{v.get('comm', 0):.1f}元 | {((v.get('it') or {}).get('d_title') or '')[:22]}")
+    if picked == 0:
+        log("猫超轮播：池空或全在转链中，本轮跳过")
 
 
 # ---- 专区动态发现（Boss 2026-10-30 明令）：自动跟进大淘客 /xp/1111 专区的新增与删减。
