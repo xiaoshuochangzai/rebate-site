@@ -132,8 +132,45 @@ def fetch_rank(kind="bitui"):
             # subsidy_rate 只是构成部分，验证 39.9×15.35%=6.12 与页面一致）
             "commission_rate": it.get("commission_rate") or "",
             "subsidy_rate": it.get("subsidy_rate") or "",
+            # 天猫超市标记（Boss 2026-10-30：猫超好货/超级疯狂日等动态专区按商品级字段标注）
+            # 注意：接口返回的 is_chaoshi 是字符串 "0"/"1"（"0" 是 truthy），必须显式归一
+            "is_chaoshi": 1 if str(it.get("is_chaoshi") or "").strip() == "1" else 0,
             "_kind": kind,  # 供 convert/to_deal 取对应 referer/分类名/前缀
         })
+    return out
+
+
+def fetch_tag(tag, pages=3, page_size=50):
+    """按专区 tag 拉 /xp/1111 活动商品（Boss 2026-10-30 明令：专区动态发现，
+    猫超好货(28)/超级疯狂日(27)等由 incremental 的白名单驱动，不再写死 tag=21）。
+    服务端单页钳 50 条，翻 pages 页拼接（专区 total 300+ 时保证新品不漏）。"""
+    out, seen = [], set()
+    for p in range(1, pages + 1):
+        url = ("https://dtkapi.ffquan.cn/taobaoapi/get-activity-goods?path=%2Fxp%2F1111"
+               f"&tag={tag}&page={p}&page_size={page_size}&sortType=4")
+        try:
+            r = requests.get(url, headers={"User-Agent": UA, "Referer": "https://www.dataoke.com/xp/1111"}, timeout=20)
+            j = r.json()
+            d = j.get("data")
+            lst = (d.get("goods_list") or d.get("list") or []) if isinstance(d, dict) else (d or [])
+        except Exception:
+            break
+        if not lst:
+            break
+        for it in lst:
+            if not isinstance(it, dict) or not it.get("id"):
+                continue
+            gid = str(it.get("id"))
+            if gid in seen:
+                continue
+            seen.add(gid)
+            it["_kind"] = "mc"
+            it["_tag"] = str(tag)
+            it["is_chaoshi"] = 1 if str(it.get("is_chaoshi") or "").strip() == "1" else 0
+            out.append(it)
+        if len(lst) < page_size:  # 该页不满，翻到底了
+            break
+        time.sleep(0.3)
     return out
 
 

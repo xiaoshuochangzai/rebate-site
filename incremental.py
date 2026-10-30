@@ -306,7 +306,9 @@ def drain_tb_done(deals, have_ids):
                         _mc_refill_tail_cnt += 1
                         if _mc_refill_tail_cnt % 2 == 0:
                             text += SELL2_TAIL  # 与主群淘宝站尾同款，每 2 条一次
-                        ok, msg = keyword_push._send("【天猫超市】" + text, log=log, ext_sync=False)
+                        # Boss 2026-10-30：标签按商品级 is_chaoshi（猫超好货=天猫超市，超级疯狂日等=淘宝）
+                        tag_lab = "【天猫超市】" if payload.get("is_chaoshi") else "【淘宝】"
+                        ok, msg = keyword_push._send(tag_lab + text, log=log, ext_sync=False)
                         if ok:
                             _mc_refill_touch(gid)  # 轮播成功，刷新时间戳实现游标轮转
                             log(f"猫超轮播已直发主群 {gid} | {str(payload.get('d_title') or '')[:24]}")
@@ -803,11 +805,12 @@ def mc_refill_register(mc_list, log=print):
             it["_kind"] = "mc"
             comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
             pool[gid] = {
-                "comm": round(comm, 2), "ts": 0,
+                "comm": round(comm, 2), "ts": 0, "tag": str(it.get("_tag") or ""),
                 "it": {k: it.get(k) for k in ("id", "goodsid", "d_title", "title", "price",
                                               "original_price", "coupon_amount", "coupon_id",
                                               "main_pic", "shop_name", "add_time",
-                                              "commission_rate", "subsidy_rate", "_kind")},
+                                              "commission_rate", "subsidy_rate", "is_chaoshi",
+                                              "_kind")},
             }
             n_new += 1
         except Exception:
@@ -847,6 +850,87 @@ def mc_refill_tick(log=print):
     # 池里掉出榜的高佣旧货清理：只保留当前在榜登记过的 + 最近轮播的（自然由 register 刷新，不额外删）
 
 
+# ---- 专区动态发现（Boss 2026-10-30 明令）：自动跟进大淘客 /xp/1111 专区的新增与删减。
+# 白名单初始 = Boss 点名的 猫超好货(28)/超级疯狂日(27)；每 10 分钟拉一次 get-promo-config，
+# 白名单外的新专区自动加入（及时补充），白名单内从接口消失的自动移除并清池。
+MC_TAGS_FILE = os.path.join(BASE_DIR, "tb_mc_tags.json")
+MC_TAGS_DEFAULT = {"28": "猫超好货", "27": "超级疯狂日"}
+MC_TAGS_EVERY_SEC = 600
+_mc_tags_cache = None
+_mc_tags_last = 0.0
+
+
+def _mc_tags():
+    global _mc_tags_cache
+    if _mc_tags_cache is None:
+        st = load_json(MC_TAGS_FILE, {})
+        tags = st.get("tags") if isinstance(st, dict) else None
+        if not tags:
+            tags = dict(MC_TAGS_DEFAULT)
+            save_json(MC_TAGS_FILE, {"tags": tags})
+        _mc_tags_cache = {str(k): v for k, v in tags.items()}
+    return _mc_tags_cache
+
+
+def _mc_tags_save():
+    save_json(MC_TAGS_FILE, {"tags": _mc_tags()})
+
+
+def poll_promo_tags(log=print):
+    """定期拉 get-promo-config 对比白名单：新专区自动加入、下线专区自动移除并清其轮播池。"""
+    global _mc_tags_cache, _mc_tags_last
+    now = time.time()
+    if now - _mc_tags_last < MC_TAGS_EVERY_SEC:
+        return
+    _mc_tags_last = now
+    import requests as _rq
+    import dtk_bitui as _db
+    try:
+        r = _rq.get(
+            "https://dtkapi.ffquan.cn/taobaoapi/get-promo-config?path=/xp/1111",
+            headers={"User-Agent": _db.UA, "Referer": "https://www.dataoke.com/xp/1111"},
+            timeout=20,
+        ).json()
+        s = json.dumps(r, ensure_ascii=False)
+    except Exception as e:
+        log(f"专区发现拉取失败：{str(e)[:60]}")
+        return
+    import re as _re
+    live = {}
+    for m in _re.finditer(r'"id"\s*:\s*(\d+)[^{}]*?"name"\s*:\s*"([^"]+)"[^{}]*?"total"\s*:\s*(\d+)', s):
+        live[m.group(1)] = (m.group(2), int(m.group(3)))
+    if not live:
+        log("专区发现：解析到 0 个专区（响应结构变化？），本轮不动")
+        return
+    tags = _mc_tags()
+    added, removed = [], []
+    # 白名单外的新专区 → 自动加入（Boss：新增的项目及时补充）
+    for pid, (name, total) in live.items():
+        if pid not in tags:
+            tags[pid] = name
+            added.append(f"{name}(tag={pid}, 在榜{total}条)")
+    # 白名单内但接口已消失的专区 → 移除并清其轮播池（Boss：删减的项目及时补充/移除）
+    pool = _mc_refill_pool()
+    dropped_pool = 0
+    for pid in list(tags.keys()):
+        if pid not in live:
+            removed.append(f"{tags[pid]}(tag={pid})")
+            for g in [g for g, v in pool.items() if str(v.get("tag")) == pid]:
+                pool.pop(g, None)
+                dropped_pool += 1
+            tags.pop(pid, None)
+    if added or removed:
+        _mc_tags_save()
+        if dropped_pool:
+            save_json(MC_REFILL_FILE, pool)
+        for a in added:
+            log(f"发现新专区，已加入推送白名单：{a}")
+        for rm in removed:
+            log(f"专区已下线，移除监听：{rm}" + (f"（清轮播池 {dropped_pool} 条）" if dropped_pool else ""))
+    else:
+        log(f"专区发现：白名单 {len(tags)} 个专区无变化（在榜专区 {len(live)} 个）")
+
+
 def poll_sell2():
     """大淘客2小时热销榜 + 猫超佣金膨胀双榜（top_sell2 / xp/1111 页面）——双11 期间只推外部群。
 
@@ -873,7 +957,17 @@ def poll_sell2():
             log(f"{dtk_bitui.RANKS[kind][2]} 本轮拉取为空/失败，跳过")
         return lst or []
 
-    mc = _pull("mc")
+    # Boss 2026-10-30 明令：专区动态发现（猫超好货28/超级疯狂日27等），按白名单逐 tag 拉取合并
+    tags = _mc_tags()
+    mc = []
+    for tag, tname in tags.items():
+        lst = dtk_bitui.fetch_tag(tag)
+        if lst:
+            mc.extend(lst)
+            log(f"专区[{tname}](tag={tag}) 本轮拉到 {len(lst)} 条")
+        else:
+            log(f"专区[{tname}](tag={tag}) 本轮拉取为空/失败")
+        time.sleep(0.3)
     s2 = _pull("sell2")
     try:
         refill_register(s2, log=log)  # Boss 2026-10-29 明令：2h 高佣商品进间隔补位池
@@ -914,8 +1008,8 @@ def poll_sell2():
         tag = "猫超佣金膨胀新品" if maochao else "2小时热销新品"
         log(f"{tag} {gid} | {(it.get('d_title') or '')[:26]}（已排入后台转链→外部群）")
 
-    for it in mc:        # 猫超优先：先猫超后 2h，同轮撞车猫超先占坑并标注
-        _try_put(it, True)
+    for it in mc:        # 猫超优先：先专区后 2h，同轮撞车专区先占坑并标注（按商品 is_chaoshi）
+        _try_put(it, bool(it.get("is_chaoshi")))
     for it in s2:
         _try_put(it, False)
     if n_low:
@@ -1262,6 +1356,12 @@ def main():
                 mc_refill_tick(log)
             except Exception as e:
                 log(f"猫超轮播调度异常：{str(e)[:80]}")
+
+            # 专区动态发现（Boss 2026-10-30 明令）：新专区自动加入、下线专区自动移除，每 10 分钟一查
+            try:
+                poll_promo_tags(log)
+            except Exception as e:
+                log(f"专区发现异常：{str(e)[:80]}")
 
             # 好单库拼多多新品（2026-10-18 接入：新商品转链后上站第三 tab）
             try:
