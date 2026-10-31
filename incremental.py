@@ -777,9 +777,9 @@ def refill_register(s2_list, log=print):
 MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
 MC_REFILL_INTERVAL_SEC = 300   # 每 5 分钟一轮
 MC_REFILL_PER_TICK = 3         # 每轮 3 条
-MC_REFILL_KEEP_TOP = 60
+MC_REFILL_KEEP_TOP = 90        # Boss 2026-10-31 明令：池容量 90，按佣金裁，新进的高佣挤掉最低佣旧条目
 MC_REFILL_IDLE_SEC = 900       # Boss 2026-10-30 明令：距上次淘宝新品进主群 >=15 分钟（静默）才轮动，有新品流就不动
-MC_REFILL_QUALIFY_TOP = 30     # 轮动资格：销量×佣金综合分 TOP 30 里按最久没发轮转
+MC_REFILL_QUALIFY_TOP = 90     # Boss 2026-10-31 明令：轮动资格扩到 TOP 90，销量×佣金综合分排序，池内按最久没发轮转
 MC_RESEND_GAP_SEC = 6 * 3600   # Boss 2026-10-31 实锤可复美变体天天重复：单条重发冷却 6 小时，冷却期先让没发过的上；全冷却才兜底放开
 _mc_refill_cache = None
 _mc_refill_last = 0.0
