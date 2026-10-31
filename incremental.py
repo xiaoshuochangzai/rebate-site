@@ -780,6 +780,7 @@ MC_REFILL_PER_TICK = 3         # 每轮 3 条
 MC_REFILL_KEEP_TOP = 60
 MC_REFILL_IDLE_SEC = 900       # Boss 2026-10-30 明令：距上次淘宝新品进主群 >=15 分钟（静默）才轮动，有新品流就不动
 MC_REFILL_QUALIFY_TOP = 30     # 轮动资格：销量×佣金综合分 TOP 30 里按最久没发轮转
+MC_RESEND_GAP_SEC = 6 * 3600   # Boss 2026-10-31 实锤可复美变体天天重复：单条重发冷却 6 小时，冷却期先让没发过的上；全冷却才兜底放开
 _mc_refill_cache = None
 _mc_refill_last = 0.0
 _mc_refill_tail_cnt = 0        # 轮播站尾计数（每 2 条带一次，内存即可，重启清零无碍）
@@ -862,17 +863,39 @@ def mc_refill_tick(log=print):
             return v.get("comm", 0) * (1 + _math.log10((v.get("sales2h") or 0) + 10))
         except Exception:
             return v.get("comm", 0)
-    qualify = sorted(pool.items(), key=lambda kv: _score(kv[1]), reverse=True)[:MC_REFILL_QUALIFY_TOP]
-    # 资格池内按最久没发轮转（ts 升序），选中才占坑
+    # 同款归一键：去掉空白/标点/括号后取前 10 字——同款多链接变体（如可复美 6 个变体）归为一组，
+    # 资格池里每组只留综合分最高的那条，避免一轮 3 条全是同款变体（Boss 2026-10-31 实锤）
+    def _variant_key(v):
+        t = re.sub(r"[\s【】\[\]（）()!！,，。.:：;；\"'“”‘’\-—_/|｜＋+]", "", str((v.get("it") or {}).get("d_title") or ""))
+        return t[:10]
+    seen_vk = set()
+    qualify = []
+    for gid, v in sorted(pool.items(), key=lambda kv: _score(kv[1]), reverse=True):
+        vk = _variant_key(v)
+        if vk:
+            if vk in seen_vk:
+                continue  # 同款变体：已有分更高的在池里，跳过
+            seen_vk.add(vk)
+        qualify.append((gid, v))
+        if len(qualify) >= MC_REFILL_QUALIFY_TOP * 2:
+            break  # 多留一档深度：冷却跳过后仍有人可选
+    # 资格池内按最久没发轮转（ts 升序），选中才占坑；第一遍跳过 6h 冷却期内的，
+    # 让没发过/发得久的优先，全冷却才第二遍放开（Boss：旧的高佣可重复发，但别天天见同几条）
     picked = 0
-    for gid, v in qualify:
+    for _pass in (1, 2):
+        for gid, v in qualify:
+            if picked >= MC_REFILL_PER_TICK:
+                break
+            ts = v.get("ts") or 0
+            if _pass == 1 and ts and now - ts < MC_RESEND_GAP_SEC:
+                continue
+            if not _tb_inflight_add("mcr_" + str(gid)):
+                continue  # 上一轮的还在转链中，跳过选下一条
+            TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
+            picked += 1
+            log(f"猫超轮播调度（静默{int((now - _tb_main_last) // 60)}分钟）：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
         if picked >= MC_REFILL_PER_TICK:
             break
-        if not _tb_inflight_add("mcr_" + str(gid)):
-            continue  # 上一轮的还在转链中，跳过选下一条
-        TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
-        picked += 1
-        log(f"猫超轮播调度（静默{int((now - _tb_main_last) // 60)}分钟）：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
     if picked == 0:
         log("猫超轮播：池空或全在转链中，本轮跳过")
 
