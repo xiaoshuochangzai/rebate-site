@@ -775,12 +775,10 @@ def refill_register(s2_list, log=print):
 # ---- 猫超高佣轮播（Boss 2026-10-29 明令）：猫超每 5 分钟 3 条高佣，没有新的符合要求的
 # 进来就轮播旧的高佣（游标轮转：最久没发的优先、同分取高佣），直发主群不走 flush 配额。
 MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
-MC_REFILL_INTERVAL_SEC = 300   # 每 5 分钟一轮
-MC_REFILL_PER_TICK = 3         # 每轮 3 条
-MC_REFILL_KEEP_TOP = 90        # Boss 2026-10-31 明令：池容量 90，按佣金裁，新进的高佣挤掉最低佣旧条目
-MC_REFILL_IDLE_SEC = 900       # Boss 2026-10-30 明令：距上次淘宝新品进主群 >=15 分钟（静默）才轮动，有新品流就不动
-MC_REFILL_QUALIFY_TOP = 90     # Boss 2026-10-31 明令：轮动资格扩到 TOP 90，销量×佣金综合分排序，池内按最久没发轮转
-MC_RESEND_GAP_SEC = 6 * 3600   # Boss 2026-10-31 实锤可复美变体天天重复：单条重发冷却 6 小时，冷却期先让没发过的上；全冷却才兜底放开
+MC_REFILL_INTERVAL_SEC = 120   # Boss 2026-11-02 明令：每 2 分钟一轮
+MC_REFILL_PER_TICK = 2         # Boss 2026-11-02 明令：每轮 2 条
+MC_REFILL_KEEP_TOP = 120       # Boss 2026-11-02 明令：精选 TOP120，按佣金裁，新进的高佣挤掉最低佣旧条目
+MC_REFILL_QUALIFY_TOP = 120    # Boss 2026-11-02 明令：全天就轮 TOP120，池内按最久没发轮转，同款变体归一去重
 _mc_refill_cache = None
 _mc_refill_last = 0.0
 _mc_refill_tail_cnt = 0        # 轮播站尾计数（每 2 条带一次，内存即可，重启清零无碍）
@@ -844,27 +842,25 @@ def mc_refill_register(mc_list, log=print):
 
 
 def mc_refill_tick(log=print):
-    """猫超轮播调度（Boss 2026-10-30 新规则）：轮动是静默兜底——
-    距上次淘宝新品进主群 >=15 分钟才动；有新品流就不轮动。
-    轮动资格 = 销量×佣金综合分 TOP30（优选销量和佣金都高的），池内按最久没发轮转。"""
+    """猫超轮播调度（Boss 2026-11-02 新规则）：精选 TOP120 全天轮动——
+    每 2 分钟一轮、每轮 2 条，池内按最久没发（ts 升序）轮转，同款变体归一去重。
+    不再等静默（全天就轮）；6h 冷却随新规取消（全天重复 TOP120 是明令节奏）。
+    池本身实时滚动换血：双榜拉新 → 4 元门槛登记 → 按佣金裁 TOP120 → 转链失败不进池。"""
     import math as _math
     global _mc_refill_last
     now = time.time()
     if now - _mc_refill_last < MC_REFILL_INTERVAL_SEC:
         return
     _mc_refill_last = now
-    # 静默门槛：15 分钟内有淘宝新品进主群 → 不轮动（Boss：有新增就不需要走轮动）
-    if now - _tb_main_last < MC_REFILL_IDLE_SEC:
-        return
     pool = _mc_refill_pool()
-    # 资格筛选：综合分 = 佣金 × (1 + log10(近2h销量+10))，销量佣金双高排前
+    # 综合分 = 佣金 × (1 + log10(近2h销量+10))，销量佣金双高排前
     def _score(v):
         try:
             return v.get("comm", 0) * (1 + _math.log10((v.get("sales2h") or 0) + 10))
         except Exception:
             return v.get("comm", 0)
     # 同款归一键：去掉空白/标点/括号后取前 10 字——同款多链接变体（如可复美 6 个变体）归为一组，
-    # 资格池里每组只留综合分最高的那条，避免一轮 3 条全是同款变体（Boss 2026-10-31 实锤）
+    # 轮转序列里每组只留综合分最高的那条，避免一轮 2 条全是同款变体
     def _variant_key(v):
         t = re.sub(r"[\s【】\[\]（）()!！,，。.:：;；\"'“”‘’\-—_/|｜＋+]", "", str((v.get("it") or {}).get("d_title") or ""))
         return t[:10]
@@ -877,25 +873,18 @@ def mc_refill_tick(log=print):
                 continue  # 同款变体：已有分更高的在池里，跳过
             seen_vk.add(vk)
         qualify.append((gid, v))
-        if len(qualify) >= MC_REFILL_QUALIFY_TOP * 2:
-            break  # 多留一档深度：冷却跳过后仍有人可选
-    # 资格池内按最久没发轮转（ts 升序），选中才占坑；第一遍跳过 6h 冷却期内的，
-    # 让没发过/发得久的优先，全冷却才第二遍放开（Boss：旧的高佣可重复发，但别天天见同几条）
+        if len(qualify) >= MC_REFILL_QUALIFY_TOP:
+            break
+    # 资格池内按最久没发轮转（qualify 保持综合分序，这里按 ts 升序取），选中才占坑
     picked = 0
-    for _pass in (1, 2):
-        for gid, v in qualify:
-            if picked >= MC_REFILL_PER_TICK:
-                break
-            ts = v.get("ts") or 0
-            if _pass == 1 and ts and now - ts < MC_RESEND_GAP_SEC:
-                continue
-            if not _tb_inflight_add("mcr_" + str(gid)):
-                continue  # 上一轮的还在转链中，跳过选下一条
-            TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
-            picked += 1
-            log(f"猫超轮播调度（静默{int((now - _tb_main_last) // 60)}分钟）：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
+    for gid, v in sorted(qualify, key=lambda kv: kv[1].get("ts") or 0):
         if picked >= MC_REFILL_PER_TICK:
             break
+        if not _tb_inflight_add("mcr_" + str(gid)):
+            continue  # 上一轮的还在转链中，跳过选下一条
+        TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
+        picked += 1
+        log(f"猫超轮播：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
     if picked == 0:
         log("猫超轮播：池空或全在转链中，本轮跳过")
 
@@ -1399,7 +1388,7 @@ def main():
             # 门槛的新线报，不需要轮动；轮动只留给新品稀少的【天猫超市】等专区（mc_refill_tick）。
             # 恢复方法：主循环重新调用 refill_tick(log) 即可（池/函数都保留着）。
 
-            # 猫超高佣轮播调度（静默兜底）：15 分钟无淘宝新品进主群才轮动，每 5 分钟查一次
+            # 猫超轮播调度（Boss 2026-11-02 新规则）：精选 TOP120 全天轮动，每 2 分钟一轮、每轮 2 条
             try:
                 mc_refill_tick(log)
             except Exception as e:
