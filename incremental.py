@@ -227,7 +227,8 @@ def drain_tb_done(deals, have_ids):
             finally:
                 _tb_inflight_discard(gid)
         elif kind == "sell2":
-            # 2小时热销榜（双11 期间外部群专属）：只入外部群队列，不进主群 KW_QUEUE
+            # 2小时热销榜（原双11 外部群新品通道）——已死路径：Boss 2026-11-03 明令外部群
+            # 也只走轮动 TOP120，poll_sell2 不再产出 sell2 任务，本分支仅存档不再触发。
             gid = str(payload.get("id") or "")
             try:
                 if out and out.get("tpwd"):
@@ -285,17 +286,24 @@ def drain_tb_done(deals, have_ids):
                         log(f"猫超轮播 {gid} 撞红包静默窗，本轮放弃")
                     else:
                         global _mc_refill_tail_cnt
-                        text = dtk_bitui.build_text(payload, out)
-                        _mc_refill_tail_cnt += 1
-                        if _mc_refill_tail_cnt % 2 == 0:
-                            text += SELL2_TAIL  # 与主群淘宝站尾同款，每 2 条一次
+                        base_text = dtk_bitui.build_text(payload, out)
                         # Boss 2026-10-30：标签按商品级 is_chaoshi（猫超好货=天猫超市，超级疯狂日等=淘宝）
                         tag_lab = "【天猫超市】" if payload.get("is_chaoshi") else "【淘宝】"
+                        # 主群：每 2 条带一次站尾
+                        _mc_refill_tail_cnt += 1
+                        text = base_text + (SELL2_TAIL if _mc_refill_tail_cnt % 2 == 0 else "")
                         ok, msg = keyword_push._send(tag_lab + text, log=log, ext_sync=False)
                         if ok:
                             _mc_refill_touch(gid)  # 轮播成功，刷新时间戳实现游标轮转
                             _touch_tb_main()  # 轮播也算主群有动静，静默时钟重置
-                            log(f"猫超轮播已直发主群 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                            # Boss 2026-11-03 明令（方案A）：外部群与主群同内容同节奏——
+                            # 轮动 TOP120 每条同步派发外部群，外部群尾计数独立（每 2 条一次）
+                            if wecom_ext is not None:
+                                ext_text = tag_lab + base_text
+                                if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
+                                    ext_text += SELL2_TAIL
+                                wecom_ext.enqueue(ext_text)
+                            log(f"猫超轮播已直发主群+同步外部群 {gid} | {str(payload.get('d_title') or '')[:24]}")
                         else:
                             log(f"猫超轮播直发失败 {gid}：{msg[:60]}（时间戳不动，下轮可再选）")
                 else:
@@ -994,31 +1002,16 @@ def poll_promo_tags(log=print):
 
 
 def poll_sell2():
-    """大淘客2小时热销榜 + 猫超佣金膨胀双榜（top_sell2 / xp/1111 页面）——双11 期间只推外部群。
+    """双榜拉取 + 轮播池登记（Boss 2026-11-03 明令重构）。
 
-    Boss 2026-10-23 明令：双11 期间发到外部群的**淘宝线报**换成 2小时热销榜新品
-    （京东照常同步，主群完全不受影响——三榜照旧走主群链路）。
-    Boss 2026-10-27 明令：加入「猫超佣金膨胀」专区（tag=21）双榜交叉：
-      - 猫超来的商品标注【天猫超市】，2小时热销的保持【淘宝】
-      - 同轮两榜都有的商品猫超优先
-      - 两榜共享单轮 2 条配额（猫超优先）
-      - 佣金门槛：预估佣金 >=4 元才发（_tb_comm_ok，两榜同规则；Boss 2026-10-29 明令从 1 元提高）
-    首跑建基线全跳过（防一次性轰炸）；seen_sell2.json 两榜共用一份 id 池
-    （同体系 dataoke 商品 id，天然交叉去重）。
-    转链复用 dtk_bitui.convert_item（品带超红通路优先，退 get-privilege）。
-    过了 SELL2_UNTIL 自动停推，恢复原样。
+    主群与外部群的淘宝线报**都只走轮动 TOP120**（方案A：同内容同节奏），
+    本函数不再承担任何推送——只做两件事：
+      1. 逐专区拉取 + 登记轮播池（主群/外部群轮动的粮道，不受双11窗口限制）
+      2. 2h 热销榜拉取 + 登记补位池（补位推送已停，仅存档）
+    双11 换源窗口（sell2_active，至 11-13）只管 2h 榜接口本身；窗口过期专区登记照常，
+    否则轮播池断粮、主群淘宝僵死。原外部群新品推送链路（_try_put→sell2→enqueue）已摘。
     """
     import dtk_bitui
-    if not dtk_bitui.sell2_active():
-        return 0
-    seen = _sell2_seen()
-
-    def _pull(kind):
-        lst = dtk_bitui.fetch_rank(kind)
-        if not lst:
-            log(f"{dtk_bitui.RANKS[kind][2]} 本轮拉取为空/失败，跳过")
-        return lst or []
-
     # Boss 2026-10-30 明令：专区动态发现（猫超好货28/超级疯狂日27等），按白名单逐 tag 拉取合并
     tags = _mc_tags()
     mc = []
@@ -1030,53 +1023,19 @@ def poll_sell2():
         else:
             log(f"专区[{tname}](tag={tag}) 本轮拉取为空/失败")
         time.sleep(0.3)
-    s2 = _pull("sell2")
+    if dtk_bitui.sell2_active():
+        s2 = dtk_bitui.fetch_rank("sell2")
+        if not s2:
+            log("2小时热销榜本轮拉取为空/失败，跳过")
+    else:
+        s2 = []
+        log("双11换源窗口（SELL2_UNTIL）已过期，2h榜跳过——专区登记不受影响")
     try:
-        refill_register(s2, log=log)  # Boss 2026-10-29 明令：2h 高佣商品进间隔补位池
-        mc_refill_register(mc, log=log)  # Boss 2026-10-29 明令：猫超高佣进 5 分钟轮播池
+        refill_register(s2, log=log)  # 2h 高佣商品进间隔补位池（补位推送已停，仅存档）
+        mc_refill_register(mc, log=log)  # 专区高佣商品进轮播池（主群+外部群轮动的粮道）
     except Exception as e:
         log(f"补位池登记异常：{str(e)[:80]}")
-    if not mc and not s2:
-        return 0
-    MARK = "_s2base"
-    if not seen or MARK not in seen:
-        seen.update(str(it.get("id")) for it in mc + s2 if it.get("id"))
-        seen.add(MARK)
-        _sell2_seen_save()
-        log(f"外部群双榜基线已建立：猫超 {len(mc)} + 2h热销 {len(s2)}（去重后 {len(seen) - 1}）全部跳过，只推之后新进榜的")
-        return 0
-
-    got = 0
-    n_low = 0
-    mc_ids = set()
-
-    def _try_put(it, maochao):
-        nonlocal got, n_low
-        if got >= SELL2_MAX_PER_ROUND:
-            return
-        gid = str(it.get("id"))
-        if not gid or gid in seen or gid in mc_ids:
-            return
-        if not _tb_comm_ok(it):
-            n_low += 1  # 佣金<4元不发群；不标 seen（日后佣金膨胀涨过线还能捞起来）
-            return
-        if not _tb_inflight_add(gid):
-            return  # 已在后台转链中，防重复入队
-        if maochao:
-            it["_maochao"] = 1
-            mc_ids.add(gid)
-        TB_JOBS.put(("sell2", it))
-        got += 1
-        tag = "猫超佣金膨胀新品" if maochao else "2小时热销新品"
-        log(f"{tag} {gid} | {(it.get('d_title') or '')[:26]}（已排入后台转链→外部群）")
-
-    for it in mc:        # 猫超优先：先专区后 2h，同轮撞车专区先占坑并标注（按商品 is_chaoshi）
-        _try_put(it, bool(it.get("is_chaoshi")))
-    for it in s2:
-        _try_put(it, False)
-    if n_low:
-        log(f"外部群佣金门槛过滤 {n_low} 条（预估佣金<4元，不发群）")
-    return got
+    return 0
 
 
 def poll_pdd(deals, have_ids):
