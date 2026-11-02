@@ -780,7 +780,8 @@ MC_REFILL_PER_TICK = 1         # Boss 2026-11-02 二次明令：每轮 1 条（�
 MC_REFILL_KEEP_TOP = 120       # Boss 2026-11-02 明令：精选 TOP120，按佣金裁，新进的高佣挤掉最低佣旧条目
 MC_REFILL_QUALIFY_TOP = 120    # Boss 2026-11-02 明令：全天就轮 TOP120，池内按最久没发轮转，同款变体归一去重
 MC_REFILL_MC_KEEP = 40         # Boss 2026-11-02 实锤池里猫超 0 条：猫超(is_chaoshi=1)保底配额，低佣不被服饰美妆挤光
-MC_REFILL_FS_KEEP_MAX = 40     # Boss 2026-11-02 实锤服饰占 60/120：服饰上限配额（超了砍佣金最低的），压到约 1/3
+MC_REFILL_FS_KEEP_MAX = 40     # 服饰总配额 = 两个价位桶之和（20+20），此常量仅作文档注释保留
+MC_REFILL_FS_SPLIT = 20        # Boss 2026-11-02 明令：40 条服饰对半分价位——20 条 ≤150 元 + 20 条 ≥150 元，某侧不足名额让给另一侧
 _FS_KW = ('羽绒服', '棉服', '棉袄', '外套', '卫衣', '毛衣', '针织', '连衣裙', '半身裙', '裤', 'T恤', '衬衫',
           '打底', '套装', '夹克', '大衣', '风衣', '短袖', '长袖', '裙', '牛仔', '西服', '马甲', '冲锋衣',
           '防晒衣', '内衣', '文胸', '秋衣', '保暖', '睡衣', '家居服', '袜', '鞋', '靴', '拖鞋')
@@ -854,7 +855,17 @@ def mc_refill_register(mc_list, log=print):
         fs_ids = {g for g, _ in fs_items}
         rest = [(g, v) for g, v in pool.items() if g not in mc_ids and g not in fs_ids]
         mc_items = sorted(mc_items, key=_ck, reverse=True)[:MC_REFILL_MC_KEEP]
-        fs_items = sorted(fs_items, key=_ck, reverse=True)[:MC_REFILL_FS_KEEP_MAX]
+        # 服饰配额分价位（Boss 2026-11-02）：先从全部服饰候选里分桶再各取 TOP20——
+        # 20 条 ≤150 元 + 20 条 ≥150 元（按佣金降序取）；先按佣金截 40 会挤掉低价侧，顺序不能反。
+        def _price(kv):
+            try:
+                return float((kv[1].get("it") or {}).get("price") or 0)
+            except Exception:
+                return 0.0
+        fs_all = sorted(fs_items, key=_ck, reverse=True)
+        fs_cheap = [(g, v) for g, v in fs_all if _price((g, v)) < 150][:MC_REFILL_FS_SPLIT]
+        fs_exp = [(g, v) for g, v in fs_all if _price((g, v)) >= 150][:MC_REFILL_FS_SPLIT]
+        fs_items = fs_cheap + fs_exp
         quota = max(0, MC_REFILL_KEEP_TOP - len(mc_items) - len(fs_items))
         rest = sorted(rest, key=_ck, reverse=True)
         keep = dict(mc_items + fs_items)
