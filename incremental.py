@@ -779,6 +779,17 @@ MC_REFILL_INTERVAL_SEC = 120   # Boss 2026-11-02 明令：每 2 分钟一轮
 MC_REFILL_PER_TICK = 1         # Boss 2026-11-02 二次明令：每轮 1 条（由 2 条降下来的）
 MC_REFILL_KEEP_TOP = 120       # Boss 2026-11-02 明令：精选 TOP120，按佣金裁，新进的高佣挤掉最低佣旧条目
 MC_REFILL_QUALIFY_TOP = 120    # Boss 2026-11-02 明令：全天就轮 TOP120，池内按最久没发轮转，同款变体归一去重
+MC_REFILL_MC_KEEP = 40         # Boss 2026-11-02 实锤池里猫超 0 条：猫超(is_chaoshi=1)保底配额，低佣不被服饰美妆挤光
+MC_REFILL_FS_KEEP_MAX = 40     # Boss 2026-11-02 实锤服饰占 60/120：服饰上限配额（超了砍佣金最低的），压到约 1/3
+_FS_KW = ('羽绒服', '棉服', '棉袄', '外套', '卫衣', '毛衣', '针织', '连衣裙', '半身裙', '裤', 'T恤', '衬衫',
+          '打底', '套装', '夹克', '大衣', '风衣', '短袖', '长袖', '裙', '牛仔', '西服', '马甲', '冲锋衣',
+          '防晒衣', '内衣', '文胸', '秋衣', '保暖', '睡衣', '家居服', '袜', '鞋', '靴', '拖鞋')
+
+
+def _is_fushi(title):
+    """服饰粗判（标题关键词）。没有类目字段可用，关键词表按实测命中率维护。"""
+    t = str(title or "")
+    return any(k in t for k in _FS_KW)
 _mc_refill_cache = None
 _mc_refill_last = 0.0
 _mc_refill_tail_cnt = 0        # 轮播站尾计数（每 2 条带一次，内存即可，重启清零无碍）
@@ -831,8 +842,27 @@ def mc_refill_register(mc_list, log=print):
         except Exception:
             continue
     if len(pool) > MC_REFILL_KEEP_TOP:
-        # 超限砍佣金最低的，保留高佣 + 最久没发的都会因高佣留下
-        keep = {gid: v for gid, v in sorted(pool.items(), key=lambda kv: kv[1].get("comm", 0), reverse=True)[:MC_REFILL_KEEP_TOP]}
+        # Boss 2026-11-02：裁池从「纯按佣金」改「配额制」——纯佣金裁会把猫超（食品日配佣金额低）
+        # 全挤光，池里 0 条猫超 → 轮动永远发不出【天猫超市】；服饰佣金高霸了一半池子。
+        # 规则：猫超保底 40（有就全保，最多 40）→ 服饰上限 40 → 剩余名额非服饰按佣金补，不足回补服饰。
+        def _ck(k):
+            return (k[1].get("comm", 0), )
+        mc_items = [(g, v) for g, v in pool.items() if str((v.get("it") or {}).get("is_chaoshi", "")).strip() == "1"]
+        fs_items = [(g, v) for g, v in pool.items()
+                    if str((v.get("it") or {}).get("is_chaoshi", "")).strip() != "1" and _is_fushi((v.get("it") or {}).get("d_title"))]
+        mc_ids = {g for g, _ in mc_items}
+        fs_ids = {g for g, _ in fs_items}
+        rest = [(g, v) for g, v in pool.items() if g not in mc_ids and g not in fs_ids]
+        mc_items = sorted(mc_items, key=_ck, reverse=True)[:MC_REFILL_MC_KEEP]
+        fs_items = sorted(fs_items, key=_ck, reverse=True)[:MC_REFILL_FS_KEEP_MAX]
+        quota = max(0, MC_REFILL_KEEP_TOP - len(mc_items) - len(fs_items))
+        rest = sorted(rest, key=_ck, reverse=True)
+        keep = dict(mc_items + fs_items)
+        for g, v in rest[:quota]:
+            keep[g] = v
+        if len(keep) < MC_REFILL_KEEP_TOP and len(rest) > quota:  # 极端兜底：其他类不足回补服饰
+            for g, v in rest[quota:quota + (MC_REFILL_KEEP_TOP - len(keep))]:
+                keep[g] = v
         pool.clear()
         pool.update(keep)
     if pool:
