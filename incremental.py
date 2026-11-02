@@ -244,26 +244,8 @@ def drain_tb_done(deals, have_ids):
                         _sell2_seen_save()
                         n_s2 += 1
                         log(f"2小时热销新品已入外部群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
-                        # Boss 2026-10-29 明令：主群淘宝线报源调整为「猫超佣金膨胀 + 2小时热销」，
-                        # 双榜成品都同步主群（猫超标【天猫超市】，2h 标【淘宝】）；外部群逻辑不变。
-                        # 构造同构 deal 塞 KW_QUEUE，由 keyword_push 按节流/配额/陈旧过滤正常推主群；
-                        # _mctag 让主群消息开头标【天猫超市】而不是【淘宝】。
-                        mc = bool(payload.get("_maochao"))
-                        try:
-                            # 跨体系去重：该商品若已从三榜推过主群，这里不再重复推
-                            if not _tb_main_gid_add(gid):
-                                log(f"跨榜去重：{gid} 已从其他榜推过主群，跳过")
-                            else:
-                                payload["_kind"] = "mc" if mc else "sell2"  # to_deal 认 _kind 选前缀，否则 KeyError
-                                deal_g = dtk_bitui.to_deal(payload, out)
-                                deal_g["_addedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                                deal_g["_mctag"] = 1 if mc else 0
-                                KW_QUEUE.append(deal_g)
-                                _mc_refill_touch(gid)  # 新品已推主群，轮播池同步刷新防扎堆
-                                _touch_tb_main()  # 静默时钟：淘宝新品进主群，轮动退避
-                                log(f"{'猫超' if mc else '2小时热销'}新品已同步主群队列 {gid} | {str(payload.get('d_title') or '')[:24]}")
-                        except Exception as e:
-                            log(f"双榜同步主群异常 {gid}：{str(e)[:80]}")
+                        # Boss 2026-11-02 明令：主群淘宝线报**仅从轮动 TOP120 出**，双榜新品不再同步主群
+                        # （原「构造 deal 塞 KW_QUEUE」主群同步块已删；外部群逻辑不变，照常入队）
                     else:
                         log(f"2小时热销 {gid} wecom_ext 未加载，本轮跳过（不标 seen，下轮重试）")
                 else:
