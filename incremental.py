@@ -776,7 +776,7 @@ def refill_register(s2_list, log=print):
 # 进来就轮播旧的高佣（游标轮转：最久没发的优先、同分取高佣），直发主群不走 flush 配额。
 MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
 MC_REFILL_INTERVAL_SEC = 120   # Boss 2026-11-02 明令：每 2 分钟一轮
-MC_REFILL_PER_TICK = 2         # Boss 2026-11-02 明令：每轮 2 条
+MC_REFILL_PER_TICK = 1         # Boss 2026-11-02 二次明令：每轮 1 条（由 2 条降下来的）
 MC_REFILL_KEEP_TOP = 120       # Boss 2026-11-02 明令：精选 TOP120，按佣金裁，新进的高佣挤掉最低佣旧条目
 MC_REFILL_QUALIFY_TOP = 120    # Boss 2026-11-02 明令：全天就轮 TOP120，池内按最久没发轮转，同款变体归一去重
 _mc_refill_cache = None
