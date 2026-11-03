@@ -101,6 +101,11 @@ def put_welfare(obj):
     return put_value("welfare", obj)
 
 
+def put_lowprice(obj):
+    """低价好物榜整包写 KV（key=lowprice，前端 /api/lowprice 读）。"""
+    return put_value("lowprice", obj)
+
+
 def put_redpack(obj):
     """红包弹层配置写 KV（key=redpack，前端 /api/redpack 读）。"""
     return put_value("redpack", obj)

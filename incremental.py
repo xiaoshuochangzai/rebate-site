@@ -1313,14 +1313,19 @@ def main():
     # 与 deals 体系完全隔离（自己的 cache、自己的 KV key），异常只记日志
     def _welfare_loop():
         wa = _welfare_mod()
+        import lowprice_auto  # 低价好物榜（Boss 2026-11-03 明令），与福利同节奏共用线程
         while True:
             try:
                 wa.run_once()
             except Exception as e:
                 print(f"福利清单更新异常：{str(e)[:120]}")
+            try:
+                lowprice_auto.run_once(log=print)
+            except Exception as e:
+                print(f"低价好物更新异常：{str(e)[:120]}")
             time.sleep(WELFARE_EVERY)
     threading.Thread(target=_welfare_loop, daemon=True).start()
-    print(f"福利清单自动更新线程已启动（每 {WELFARE_EVERY//60} 分钟一轮）")
+    print(f"福利清单自动更新线程已启动（每 {WELFARE_EVERY//60} 分钟一轮，含低价好物）")
 
     args = sys.argv[1:]
     once = "--once" in args
