@@ -22,7 +22,7 @@ sys.path.insert(0, BASE_DIR)
 LOWPRICE_PATH = os.path.join("site", "lowprice.json")
 CACHE = "lp_conv_cache.json"
 MAX_ITEMS = 200          # 滚动保留条数
-MAX_PRICE = 30.0         # Boss 明令：价格 ≤30 元
+MAX_PRICE = 200.0        # Boss 2026-11-03 明令：门槛放宽到 ≤200 元（原 30，纳入线报推送体系）
 MIN_RATE = 10.0          # Boss 明令：佣金率 >10%
 GAP = 0.8                # 转链条间间隔（防风控）
 
@@ -50,8 +50,10 @@ def _save_cache(c):
         pass
 
 
-def fetch_lowprice():
-    """拉 top_sell 榜并按 Boss 口径过滤：price≤30 且 commission_rate>10。"""
+
+def _filter_rank():
+    """拉 top_sell 榜并按 Boss 口径过滤：price≤200 且 commission_rate>10。
+    返回 dtk 原始条目（含 commission_rate/d_title 等全字段），供上下两路各自映射。"""
     import dtk_bitui
     lst = dtk_bitui.fetch_rank("sell")
     out = []
@@ -63,7 +65,16 @@ def fetch_lowprice():
             continue
         if price <= 0 or price > MAX_PRICE or rate <= MIN_RATE:
             continue
-        # 券额/原价用于前端「券后省xx%」（Boss 2026-11-03：站内禁止出现佣金字样）
+        out.append(it)
+    return out
+
+
+def fetch_lowprice():
+    """上站（tab）用映射：券额/原价算「券后省%」（Boss 2026-11-03：站内禁止佣金字样），
+    输出不含任何佣金字段。"""
+    out = []
+    for it in _filter_rank():
+        price = float(it.get("price") or 0)
         try:
             quan = float(it.get("coupon_amount") or 0)
             oprice = float(it.get("original_price") or 0)
@@ -77,9 +88,17 @@ def fetch_lowprice():
             "quan": ("%.1f" % quan).rstrip("0").rstrip("."),
             "oprice": ("%.1f" % oprice).rstrip("0").rstrip("."),
             "pic": it.get("main_pic") or "",
+            "sales_2h": it.get("sales_2h") or 0,
             "_kind": it.get("_kind") or "sell",
         })
     return out
+
+
+def lp_candidates():
+    """线报登记用候选（Boss 2026-11-03：低价好物纳入线报，池内 40 名额）：
+    dtk 原始字段直出（d_title/commission_rate/sales_2h 齐全，供轮动池门槛与综合分）。
+    佣金字段仅内部门槛计算用，绝不上站显示。"""
+    return _filter_rank()
 
 
 def run_once(log=_log):

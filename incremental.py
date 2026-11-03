@@ -148,13 +148,15 @@ def _tb_worker():
                         TB_DONE.put(("refill", payload, conv))
                     elif kind == "refill_mc":  # 猫超轮播：直发主群，同样独立回流
                         TB_DONE.put(("refill_mc", payload, conv))
+                    elif kind == "lp":  # 低价好物：与猫超轮播同一套直发回流（Boss 2026-11-03）
+                        TB_DONE.put(("lp", payload, conv))
                     else:
                         TB_DONE.put((("sell2" if kind == "sell2" else "bitui"), payload, conv))
                     ok_flag = True
                 else:
-                    if kind == "refill_mc":
+                    if kind in ("refill_mc", "lp"):
                         _mc_refill_fail(k)  # 失败退避 30 分钟，别让一条转不链的商品卡死轮动游标
-                    log(f"{('高佣补位' if kind == 'refill' else ('猫超轮播' if kind == 'refill_mc' else '三榜'))} {k} 后台转链失败（无淘口令），下轮重试")
+                    log(f"{('高佣补位' if kind == 'refill' else ('低价好物' if kind == 'lp' else ('猫超轮播' if kind == 'refill_mc' else '三榜')))} {k} 后台转链失败（无淘口令），下轮重试")
         except Exception as e:
             log(f"淘宝后台转链异常：{str(e)[:100]}")
         finally:
@@ -279,9 +281,11 @@ def drain_tb_done(deals, have_ids):
                 log(f"高佣补位异常 {gid}：{str(e)[:80]}")
             finally:
                 _tb_inflight_discard("rf_" + gid)
-        elif kind == "refill_mc":
-            # Boss 2026-10-29 明令：猫超高佣轮播直发主群（每 5 分钟 3 条，没新货轮播旧的）。
-            # 绕过 flush 配额/节流，但夜闸与红包静默照守；不上站、不进外部群（外部群猫超有自己的链路）。
+        elif kind in ("refill_mc", "lp"):
+            # 猫超高佣轮播直发主群（Boss 2026-10-29）+ 低价好物（Boss 2026-11-03，_kind=lp，
+            # 固定 40 名额）同一套直发链路：主群直发 + 外部群同步（方案A 同内容同节奏）。
+            # 绕过 flush 配额/节流，但夜闸与红包静默照守；不上站。
+            lab = "低价好物" if kind == "lp" else "猫超轮播"
             gid = str(payload.get("id") or "")
             try:
                 if out and out.get("tpwd"):
@@ -309,15 +313,15 @@ def drain_tb_done(deals, have_ids):
                                 if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
                                     ext_text += SELL2_TAIL
                                 wecom_ext.enqueue(ext_text)
-                            log(f"猫超轮播已直发主群+同步外部群 {gid} | {str(payload.get('d_title') or '')[:24]}")
+                            log(f"{lab}已直发主群+同步外部群 {gid} | {str(payload.get('d_title') or '')[:24]}")
                         else:
-                            log(f"猫超轮播直发失败 {gid}：{msg[:60]}（时间戳不动，下轮可再选）")
+                            log(f"{lab}直发失败 {gid}：{msg[:60]}（时间戳不动，下轮可再选）")
                 else:
-                    log(f"猫超轮播 {gid} 无淘口令，本轮放弃")
+                    log(f"{lab} {gid} 无淘口令，本轮放弃")
             except Exception as e:
-                log(f"猫超轮播异常 {gid}：{str(e)[:80]}")
+                log(f"{lab}异常 {gid}：{str(e)[:80]}")
             finally:
-                _tb_inflight_discard("mcr_" + gid)
+                _tb_inflight_discard(gid if kind == "lp" else "mcr_" + gid)
         else:
             gid = str(payload.get("id") or "")
             try:
@@ -786,12 +790,15 @@ def refill_register(s2_list, log=print):
 # 进来就轮播旧的高佣（游标轮转：最久没发的优先、同分取高佣），直发主群不走 flush 配额。
 MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
 MC_REFILL_INTERVAL_SEC = 60    # 每 1 分钟一轮（Boss 2026-11-02 明令）
+LP_SLOTS = 40                  # Boss 2026-11-03 明令：轮动池里低价好物固定 40 个名额（超额按佣金退役）
+LP_POLL_INTERVAL_SEC = 600     # 低价好物榜拉取登记节流（10 分钟一轮，与 tab 更新同节奏）
 MC_REFILL_PER_TICK = 1         # 每轮 1 条
 MC_REFILL_MAX = 800            # Boss 2026-11-03 方案B：双榜全量登记、不再裁 TOP120；池超 800 兜底退役最老的已发条目
 MC_REFILL_OLD_DAYS = 3         # 入池超 3 天且已发过的老货自动退役（防池无限膨胀）
 MC_REFILL_FAIL_COOLDOWN = 1800  # 转链失败退避 30 分钟；累计失败 3 次踢出池（Boss 2026-11-03 明令）
 _mc_refill_cache = None
 _mc_refill_last = 0.0
+_lp_poll_last = 0.0   # 低价好物榜登记节流游标
 _mc_refill_tail_cnt = 0        # 轮播站尾计数（每 2 条带一次，内存即可，重启清零无碍）
 _tb_main_last = 0.0            # 最近一次淘宝内容（新品/轮播）进主群的时刻——静默判断基准
 
@@ -878,6 +885,13 @@ def mc_refill_register(mc_list, log=print):
         cut += 1
     if cut:
         log(f"轮播池清出超价 {cut} 条（券后 >{TB_MAX_PRICE:g} 元）")
+    # Boss 2026-11-03：低价好物固定 40 名额——超额按佣金降序退役最差的
+    lp = [(g, v) for g, v in pool.items() if (v.get("it") or {}).get("_kind") == "lp"]
+    if len(lp) > LP_SLOTS:
+        lp.sort(key=lambda kv: kv[1].get("comm") or 0)
+        for g, _v in lp[:len(lp) - LP_SLOTS]:
+            pool.pop(g, None)
+        log(f"低价好物名额清理：超额退役 {len(lp) - LP_SLOTS} 条（保留佣金 TOP{LP_SLOTS}）")
     # 膨胀兜底：①入池超 3 天且已发过的退役；②池超 MAX 退役最老的已发条目（从未发过的新面孔永不退役）
     dropped = 0
     expire_line = time.time() - MC_REFILL_OLD_DAYS * 86400
@@ -924,10 +938,13 @@ def mc_refill_tick(log=print):
         return (v.get("fail_ts") or 0) and now - v["fail_ts"] < MC_REFILL_FAIL_COOLDOWN
 
     def _try(gid, v):
-        if not _tb_inflight_add("mcr_" + str(gid)):
+        k = ((v.get("it") or {}).get("_kind")) or "mc"
+        is_lp = (k == "lp")
+        # inflight 键与 drain_tb_done 的 discard 键严格配对：refill_mc="mcr_"+gid，lp=gid
+        if not _tb_inflight_add(str(gid) if is_lp else "mcr_" + str(gid)):
             return False  # 上一轮的还在转链中，跳过
-        TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
-        log(f"猫超轮播：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
+        TB_JOBS.put(("lp" if is_lp else "refill_mc", dict(v.get("it") or {})))
+        log(f"{'低价好物' if is_lp else '猫超轮播'}：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
         return True
 
     picked = 0
@@ -1084,6 +1101,28 @@ def poll_sell2():
     except Exception as e:
         log(f"轮播池登记异常：{str(e)[:80]}")
     return 0
+
+
+def poll_lowprice(log=print):
+    """低价好物纳入线报（Boss 2026-11-03 明令）：拉低价好物榜（≤200元 佣>10%）登记进轮动池，
+    _kind='lp'，池内固定 LP_SLOTS=40 个名额，轮动时与猫超/2h 同节奏发主群+外部群。
+    榜单拉取 10 分钟节流；登记与转链/推送全复用轮动池既有链路。"""
+    global _lp_poll_last
+    now = time.time()
+    if now - _lp_poll_last < LP_POLL_INTERVAL_SEC:
+        return
+    _lp_poll_last = now
+    try:
+        import lowprice_auto
+        cand = lowprice_auto.lp_candidates()
+    except Exception as e:
+        log(f"低价好物榜拉取异常：{str(e)[:80]}")
+        return
+    reg = []
+    for it in cand:
+        it["_kind"] = "lp"  # 原始字段直出（d_title/commission_rate/sales_2h 齐全），池与转链链路直接可用
+        reg.append(it)
+    mc_refill_register(reg, log=log)
 
 
 def poll_pdd(deals, have_ids):
@@ -1470,6 +1509,12 @@ def main():
                 poll_sell2()
             except Exception as e:
                 log(f"2小时热销榜轮询异常：{str(e)[:100]}")
+
+            # 低价好物纳入线报（Boss 2026-11-03 明令：≤200元 佣>10%，池内 40 名额，10 分钟节流）
+            try:
+                poll_lowprice(log)
+            except Exception as e:
+                log(f"低价好物轮询异常：{str(e)[:100]}")
 
             # 高佣补位（2h 池，标【淘宝】）已停用——Boss 2026-10-30 明令：【淘宝】不可能缺满足
             # 门槛的新线报，不需要轮动；轮动只留给新品稀少的【天猫超市】等专区（mc_refill_tick）。
