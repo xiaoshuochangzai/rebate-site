@@ -33,6 +33,10 @@ try:
         import wecom_ext  # 外部群 RPA 通道（缺失时 2小时热销榜跳过本轮，不标 seen）
     except Exception:
         wecom_ext = None
+    try:
+        import union_jd  # 京东联盟源头线报采集（Boss 2026-11-03 明令：好单库京东断供的替补源）
+    except Exception:
+        union_jd = None
 except Exception:
     # pythonw 无窗口：import 挂了进程会无声消失，不落盘 Boss 永远查不到原因
     import traceback as _tb
@@ -1103,6 +1107,34 @@ def poll_pdd(deals, have_ids):
     return got
 
 
+def process_union_jd(deals, have_ids, log=print):
+    """京东联盟「源头线报」采集入站（好单库京东源断供的替补，Boss 2026-11-03 明令）。
+    素材库文案自带官方 u.jd.com/3.cn 链 → 无需精品库转链，直接落盘+进推送队列。"""
+    if union_jd is None:
+        return
+    try:
+        items = union_jd.poll_union(log=log)
+    except Exception as e:
+        log(f"联盟线报采集异常：{str(e)[:80]}")
+        return
+    n = 0
+    for d in items:
+        try:
+            wid = str(d.get("id"))
+            if wid in have_ids:
+                continue
+            deals.insert(0, d)
+            have_ids.add(wid)
+            KW_QUEUE.append(d)
+            n += 1
+            log(f"联盟线报已落盘待推 {wid} | {((d['list'][0] or {}).get('content') or '')[:24]}")
+        except Exception:
+            continue
+    if n:
+        persist(deals)
+        mark_dirty(f"union jd {n}")
+
+
 def has_link(deal):
     """判定线报是否含商品/券链接。纯文字、无任何链接的（如「促销取消了，先忽略」）
     对导购无意义，应忽略且不收录。淘宝线报（淘口令形态）没有 http 链接，放行：
@@ -1345,6 +1377,12 @@ def main():
                 log(f"发现 {len(fresh)} 条新线报")
             for d in fresh:
                 _ingest_one(d, cfg, deals, have_ids, seen, log)
+
+            # 京东联盟源头线报（Boss 2026-11-03 明令：好单库京东源断供，用联盟素材库顶着）
+            try:
+                process_union_jd(deals, have_ids, log)
+            except Exception as e:
+                log(f"联盟线报处理异常：{str(e)[:80]}")
 
             # 自动补转：每轮从待转队列取 1 条重试，转上链才入库部署
             pending = load_json(PENDING_FILE, [])
