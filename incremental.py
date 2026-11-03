@@ -771,23 +771,11 @@ def refill_register(s2_list, log=print):
 # ---- 猫超高佣轮播（Boss 2026-10-29 明令）：猫超每 5 分钟 3 条高佣，没有新的符合要求的
 # 进来就轮播旧的高佣（游标轮转：最久没发的优先、同分取高佣），直发主群不走 flush 配额。
 MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
-MC_REFILL_INTERVAL_SEC = 60    # Boss 2026-11-02 三次明令：主群淘宝只剩轮动后改每 1 分钟一轮（每轮 1 条不变）
-MC_REFILL_PER_TICK = 1         # Boss 2026-11-02 二次明令：每轮 1 条（由 2 条降下来的）
-MC_REFILL_KEEP_TOP = 120       # Boss 2026-11-02 明令：精选 TOP120，按佣金裁，新进的高佣挤掉最低佣旧条目
-MC_REFILL_QUALIFY_TOP = 120    # Boss 2026-11-02 明令：全天就轮 TOP120，池内按最久没发轮转，同款变体归一去重
-MC_REFILL_MC_KEEP = 40         # Boss 2026-11-02 实锤池里猫超 0 条：猫超(is_chaoshi=1)保底配额，低佣不被服饰美妆挤光
-MC_REFILL_FS_KEEP_MAX = 40     # 服饰总配额 = 两个价位桶之和（20+20），此常量仅作文档注释保留
-MC_REFILL_FS_SPLIT = 20        # Boss 2026-11-02 明令：40 条服饰对半分价位——20 条 ≤150 元 + 20 条 ≥150 元，某侧不足名额让给另一侧
-MC_REFILL_FAIL_COOLDOWN = 1800  # Boss 2026-11-03 实锤单品转链失败卡死轮动游标（鸭宝宝连败 10 轮堵住全场）：失败退避 30 分钟再试
-_FS_KW = ('羽绒服', '棉服', '棉袄', '外套', '卫衣', '毛衣', '针织', '连衣裙', '半身裙', '裤', 'T恤', '衬衫',
-          '打底', '套装', '夹克', '大衣', '风衣', '短袖', '长袖', '裙', '牛仔', '西服', '马甲', '冲锋衣',
-          '防晒衣', '内衣', '文胸', '秋衣', '保暖', '睡衣', '家居服', '袜', '鞋', '靴', '拖鞋')
-
-
-def _is_fushi(title):
-    """服饰粗判（标题关键词）。没有类目字段可用，关键词表按实测命中率维护。"""
-    t = str(title or "")
-    return any(k in t for k in _FS_KW)
+MC_REFILL_INTERVAL_SEC = 60    # 每 1 分钟一轮（Boss 2026-11-02 明令）
+MC_REFILL_PER_TICK = 1         # 每轮 1 条
+MC_REFILL_MAX = 800            # Boss 2026-11-03 方案B：双榜全量登记、不再裁 TOP120；池超 800 兜底退役最老的已发条目
+MC_REFILL_OLD_DAYS = 3         # 入池超 3 天且已发过的老货自动退役（防池无限膨胀）
+MC_REFILL_FAIL_COOLDOWN = 1800  # 转链失败退避 30 分钟；累计失败 3 次踢出池（Boss 2026-11-03 明令）
 _mc_refill_cache = None
 _mc_refill_last = 0.0
 _mc_refill_tail_cnt = 0        # 轮播站尾计数（每 2 条带一次，内存即可，重启清零无碍）
@@ -838,7 +826,9 @@ def _mc_refill_fail(gid):
 
 
 def mc_refill_register(mc_list, log=print):
-    """poll_sell2 每轮把猫超榜过 4 元门槛的商品登记进轮播池。"""
+    """双榜（专区 + 2小时热销）过 4 元门槛的商品全量登记进轮播池（Boss 2026-11-03 方案B）。
+    不再裁 TOP120/配额——新面孔（ts=0）轮动时天然插队优先，老货按最久没发轮转；
+    池超 MAX 或条目过老的退役兜底，防无限膨胀。"""
     pool = _mc_refill_pool()
     n_new = 0
     for it in mc_list:
@@ -846,14 +836,15 @@ def mc_refill_register(mc_list, log=print):
             gid = str(it.get("id") or "")
             if not gid or gid in pool or not _tb_comm_ok(it):
                 continue
-            it["_kind"] = "mc"
+            it["_kind"] = it.get("_kind") or "mc"  # 专区条目=mc，2h 热销条目=sell2（fetch_rank 已注入）
             comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
             try:
                 sales2h = int(float(it.get("sales_2h") or 0))
             except Exception:
                 sales2h = 0
             pool[gid] = {
-                "comm": round(comm, 2), "ts": 0, "tag": str(it.get("_tag") or ""), "sales2h": sales2h,
+                "comm": round(comm, 2), "ts": 0, "reg_time": time.time(),
+                "tag": str(it.get("_tag") or ""), "sales2h": sales2h,
                 "it": {k: it.get(k) for k in ("id", "goodsid", "d_title", "title", "price",
                                               "original_price", "coupon_amount", "coupon_id",
                                               "main_pic", "shop_name", "add_time",
@@ -863,51 +854,32 @@ def mc_refill_register(mc_list, log=print):
             n_new += 1
         except Exception:
             continue
-    if len(pool) > MC_REFILL_KEEP_TOP:
-        # Boss 2026-11-02：裁池从「纯按佣金」改「配额制」——纯佣金裁会把猫超（食品日配佣金额低）
-        # 全挤光，池里 0 条猫超 → 轮动永远发不出【天猫超市】；服饰佣金高霸了一半池子。
-        # 规则：猫超保底 40（有就全保，最多 40）→ 服饰上限 40 → 剩余名额非服饰按佣金补，不足回补服饰。
-        def _ck(k):
-            return (k[1].get("comm", 0), )
-        mc_items = [(g, v) for g, v in pool.items() if str((v.get("it") or {}).get("is_chaoshi", "")).strip() == "1"]
-        fs_items = [(g, v) for g, v in pool.items()
-                    if str((v.get("it") or {}).get("is_chaoshi", "")).strip() != "1" and _is_fushi((v.get("it") or {}).get("d_title"))]
-        mc_ids = {g for g, _ in mc_items}
-        fs_ids = {g for g, _ in fs_items}
-        rest = [(g, v) for g, v in pool.items() if g not in mc_ids and g not in fs_ids]
-        mc_items = sorted(mc_items, key=_ck, reverse=True)[:MC_REFILL_MC_KEEP]
-        # 服饰配额分价位（Boss 2026-11-02）：先从全部服饰候选里分桶再各取 TOP20——
-        # 20 条 ≤150 元 + 20 条 ≥150 元（按佣金降序取）；先按佣金截 40 会挤掉低价侧，顺序不能反。
-        def _price(kv):
-            try:
-                return float((kv[1].get("it") or {}).get("price") or 0)
-            except Exception:
-                return 0.0
-        fs_all = sorted(fs_items, key=_ck, reverse=True)
-        fs_cheap = [(g, v) for g, v in fs_all if _price((g, v)) < 150][:MC_REFILL_FS_SPLIT]
-        fs_exp = [(g, v) for g, v in fs_all if _price((g, v)) >= 150][:MC_REFILL_FS_SPLIT]
-        fs_items = fs_cheap + fs_exp
-        quota = max(0, MC_REFILL_KEEP_TOP - len(mc_items) - len(fs_items))
-        rest = sorted(rest, key=_ck, reverse=True)
-        keep = dict(mc_items + fs_items)
-        for g, v in rest[:quota]:
-            keep[g] = v
-        if len(keep) < MC_REFILL_KEEP_TOP and len(rest) > quota:  # 极端兜底：其他类不足回补服饰
-            for g, v in rest[quota:quota + (MC_REFILL_KEEP_TOP - len(keep))]:
-                keep[g] = v
-        pool.clear()
-        pool.update(keep)
-    if pool:
+    if n_new:
+        log(f"轮播池登记：新面孔 {n_new} 个（池内 {len(pool)} 条）")
+    # 膨胀兜底：①入池超 3 天且已发过的退役；②池超 MAX 退役最老的已发条目（从未发过的新面孔永不退役）
+    dropped = 0
+    expire_line = time.time() - MC_REFILL_OLD_DAYS * 86400
+    for gid in [g for g, v in pool.items()
+                if (v.get("ts") or 0) > 0 and (v.get("reg_time") or 0) < expire_line]:
+        pool.pop(gid, None)
+        dropped += 1
+    if len(pool) > MC_REFILL_MAX:
+        old = sorted([(g, v) for g, v in pool.items() if (v.get("ts") or 0) > 0],
+                     key=lambda kv: kv[1].get("ts") or 0)
+        for g, _v in old[:len(pool) - MC_REFILL_MAX]:
+            pool.pop(g, None)
+            dropped += 1
+    if dropped:
+        log(f"轮播池退役 {dropped} 条老货（过 {MC_REFILL_OLD_DAYS} 天/池超 {MC_REFILL_MAX}）")
+    if pool and (n_new or dropped):
         save_json(MC_REFILL_FILE, pool)
-        if n_new:
-            log(f"猫超轮播池：新增 {n_new} 条（池内 {len(pool)} 条）")
 
 
 def mc_refill_tick(log=print):
-    """猫超轮播调度（Boss 2026-11-02 新规则）：精选 TOP120 全天轮动——
-    每 2 分钟一轮、每轮 2 条，池内按最久没发（ts 升序）轮转，同款变体归一去重。
-    不再等静默（全天就轮）；6h 冷却随新规取消（全天重复 TOP120 是明令节奏）。
-    池本身实时滚动换血：双榜拉新 → 4 元门槛登记 → 按佣金裁 TOP120 → 转链失败不进池。"""
+    """轮动调度（Boss 2026-11-03 方案B）：双榜全量池 + 新面孔优先插队——
+    每分钟 1 条：先发「从没发过」的新面孔（ts=0，综合分最高先上，同款变体归一去重）；
+    没有新面孔了，才从已发过的里按最久没发（ts 升序）轮老货（同款归一去重保留）。
+    失败退避 30 分钟 + 满 3 次踢出照旧；4 元门槛在登记时把关。"""
     import math as _math
     global _mc_refill_last
     now = time.time()
@@ -921,40 +893,57 @@ def mc_refill_tick(log=print):
             return v.get("comm", 0) * (1 + _math.log10((v.get("sales2h") or 0) + 10))
         except Exception:
             return v.get("comm", 0)
-    # 同款归一键：去掉空白/标点/括号后取前 10 字——同款多链接变体（如可复美 6 个变体）归为一组，
-    # 轮转序列里每组只留综合分最高的那条，避免一轮 2 条全是同款变体
+    # 同款归一键：去掉空白/标点/括号后取前 10 字——同款多链接变体归为一组，一轮只出一条
     def _variant_key(v):
         t = re.sub(r"[\s【】\[\]（）()!！,，。.:：;；\"'“”‘’\-—_/|｜＋+]", "", str((v.get("it") or {}).get("d_title") or ""))
         return t[:10]
+
+    def _cooling(v):
+        return (v.get("fail_ts") or 0) and now - v["fail_ts"] < MC_REFILL_FAIL_COOLDOWN
+
+    def _try(gid, v):
+        if not _tb_inflight_add("mcr_" + str(gid)):
+            return False  # 上一轮的还在转链中，跳过
+        TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
+        log(f"猫超轮播：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
+        return True
+
+    picked = 0
+    # pass1：新面孔（ts=0）综合分降序，同款归一去重
+    fresh = sorted([(g, v) for g, v in pool.items() if not (v.get("ts") or 0)],
+                   key=lambda kv: _score(kv[1]), reverse=True)
     seen_vk = set()
-    qualify = []
-    for gid, v in sorted(pool.items(), key=lambda kv: _score(kv[1]), reverse=True):
+    for gid, v in fresh:
+        if picked >= MC_REFILL_PER_TICK:
+            break
         vk = _variant_key(v)
         if vk:
             if vk in seen_vk:
-                continue  # 同款变体：已有分更高的在池里，跳过
+                continue
             seen_vk.add(vk)
-        qualify.append((gid, v))
-        if len(qualify) >= MC_REFILL_QUALIFY_TOP:
-            break
-    # 资格池内按最久没发轮转（qualify 保持综合分序，这里按 ts 升序取），选中才占坑；
-    # 第一遍跳过 30 分钟内转链失败的（退避，防单品卡死游标），全冷却才第二遍放开
-    picked = 0
-    for _pass in (1, 2):
-        for gid, v in sorted(qualify, key=lambda kv: kv[1].get("ts") or 0):
+        if _cooling(v):
+            continue
+        if _try(gid, v):
+            picked += 1
+    # pass2：老货轮转（ts 升序最久没发优先），全池同款归一去重 + 失败退避跳过
+    if picked == 0:
+        old = sorted([(g, v) for g, v in pool.items() if (v.get("ts") or 0) > 0],
+                     key=lambda kv: kv[1].get("ts") or 0)
+        seen_vk = set()
+        for gid, v in old:
             if picked >= MC_REFILL_PER_TICK:
                 break
-            if _pass == 1 and (v.get("fail_ts") or 0) and now - v["fail_ts"] < MC_REFILL_FAIL_COOLDOWN:
+            vk = _variant_key(v)
+            if vk:
+                if vk in seen_vk:
+                    continue
+                seen_vk.add(vk)
+            if _cooling(v):
                 continue
-            if not _tb_inflight_add("mcr_" + str(gid)):
-                continue  # 上一轮的还在转链中，跳过选下一条
-            TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
-            picked += 1
-            log(f"猫超轮播：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
-        if picked >= MC_REFILL_PER_TICK:
-            break
+            if _try(gid, v):
+                picked += 1
     if picked == 0:
-        log("猫超轮播：池空或全在转链中，本轮跳过")
+        log("猫超轮播：池空/全在转链中/全在退避，本轮跳过")
 
 
 # ---- 专区动态发现（Boss 2026-10-30 明令）：自动跟进大淘客 /xp/1111 专区的新增与删减。
@@ -1068,10 +1057,10 @@ def poll_sell2():
         s2 = []
         log("双11换源窗口（SELL2_UNTIL）已过期，2h榜跳过——专区登记不受影响")
     try:
-        refill_register(s2, log=log)  # 2h 高佣商品进间隔补位池（补位推送已停，仅存档）
+        mc_refill_register(s2, log=log)  # 方案B：2h 热销榜也全量登记进轮播池（_kind=sell2，与专区同池轮动）
         mc_refill_register(mc, log=log)  # 专区高佣商品进轮播池（主群+外部群轮动的粮道）
     except Exception as e:
-        log(f"补位池登记异常：{str(e)[:80]}")
+        log(f"轮播池登记异常：{str(e)[:80]}")
     return 0
 
 
