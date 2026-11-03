@@ -1378,11 +1378,11 @@ def main():
             for d in fresh:
                 _ingest_one(d, cfg, deals, have_ids, seen, log)
 
-            # 京东联盟源头线报（Boss 2026-11-03 明令：好单库京东源断供，用联盟素材库顶着）
-            try:
-                process_union_jd(deals, have_ids, log)
-            except Exception as e:
-                log(f"联盟线报处理异常：{str(e)[:80]}")
+            # 京东联盟源头线报采集：Boss 2026-11-03 叫停（好单库已恢复）。代码保留，启用时取消下面注释即可。
+            # try:
+            #     process_union_jd(deals, have_ids, log)
+            # except Exception as e:
+            #     log(f"联盟线报处理异常：{str(e)[:80]}")
 
             # 自动补转：每轮从待转队列取 1 条重试，转上链才入库部署
             pending = load_json(PENDING_FILE, [])
