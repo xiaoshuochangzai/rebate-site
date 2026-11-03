@@ -409,6 +409,7 @@ def _bump_sell2_tail():
 BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
 PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id
 PDD_MAX_PER_ROUND = 3  # 单轮最多转链几条拼多多新品
+PDD_MAX_PRICE = 50    # Boss 2026-11-03 明令：拼多多线报只上券后 ≤50 元
 
 # 双11福利清单自动更新（Boss 2026-10-22 拍板：每 10 分钟一轮，独立线程）
 WELFARE_EVERY = 600  # 秒
@@ -1082,17 +1083,35 @@ def poll_pdd(deals, have_ids):
     if not items:
         return 0
     got = 0
+    dropped = 0
     for it in items:
         if got >= PDD_MAX_PER_ROUND:
             break
         gid = str(it.get("goods_id") or "")
         if not gid or gid in seen or gid in have_ids or ("pdd_" + gid) in have_ids:
             continue
+        # Boss 2026-11-03：拼多多线报只上券后 ≤50 元（空券后价退原价判，超价记 seen 不再重试）
+        try:
+            endp = float(str(it.get("itemendprice") or "").strip() or 0)
+        except Exception:
+            endp = 0.0
+        if endp <= 0:
+            try:
+                endp = float(str(it.get("itemprice") or "").strip() or 0)
+            except Exception:
+                endp = 0.0
+        if endp > PDD_MAX_PRICE:
+            seen.add(gid)
+            dropped += 1
+            continue
         if not _tb_inflight_add(gid):
             continue  # 已在后台转链中，防重复入队
         TB_JOBS.put(("pdd", it))
         got += 1
         log(f"拼多多新品 {gid} | {str(it.get('goodsname') or '')[:26]}（已排入后台转链）")
+    if dropped:
+        _pdd_seen_save()
+        log(f"拼多多过滤：{dropped} 条券后超 {PDD_MAX_PRICE:g} 元不上站（已记 seen）")
     return got
 
 

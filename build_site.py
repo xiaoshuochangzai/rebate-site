@@ -403,7 +403,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
       <div class="title">平台</div>
       <ul id="plat"></ul>
       <div class="srch">
-        <input id="kw" placeholder="搜索商品关键词，如：蓝月亮" autocomplete="off">
+        <input id="kw" placeholder="全站搜索：线报+福利清单+低价好物" autocomplete="off">
         <button class="sbtn" id="btnSearch">搜索</button>
       </div>
     </div>
@@ -615,13 +615,51 @@ function matched(){
     const head = copyTextOf(d).toLowerCase().split('\\n').slice(0, 2).join('\\n');
     (head.indexOf(k)>=0 ? strong : weak).push(d);
   });
-  return strong.concat(weak);
+  // Boss 2026-11-03：搜索同时覆盖「双11福利清单」「低价好物」两个专区（排在普通线报之后）
+  const wfHits = [];
+  ((WELFARE && WELFARE.items) || []).forEach(it=>{
+    if((it.t||'').toLowerCase().indexOf(k)>=0) wfHits.push({_wf:1, it:it});
+  });
+  const lpHits = [];
+  ((LOWPRICE && LOWPRICE.items) || []).forEach(it=>{
+    if((it.t||'').toLowerCase().indexOf(k)>=0) lpHits.push({_lp:1, it:it});
+  });
+  return strong.concat(weak).concat(wfHits).concat(lpHits);
 }
 let cur = [];
 function render(reset){
+  const list = document.getElementById('list');
+  if(kw){
+    // 搜索态（Boss 2026-11-03：关键词同时搜普通线报+福利清单+低价好物）；专区数据没加载先现拉
+    const go = ()=>{
+      document.getElementById('welfareBar').style.display = 'none';
+      if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
+      document.getElementById('cnt').textContent = cur.length;
+      document.getElementById('total').textContent = DEALS.length;
+      document.getElementById('empty').style.display = cur.length ? 'none' : 'block';
+      const slice = cur.slice(shown, shown+PAGE_SIZE);
+      list.insertAdjacentHTML('beforeend', slice.map(x=> (x&&x._wf) ? wfCard(x.it) : ((x&&x._lp) ? lpCard(x.it) : cardHtml(x))).join(''));
+      shown += slice.length;
+      document.getElementById('more').style.display = shown < cur.length ? 'block' : 'none';
+    };
+    if(!WELFARE || !LOWPRICE){
+      let n = 0; const done = ()=>{ if(++n===2) go(); };
+      if(WELFARE){ done(); }
+      else fetch('/api/welfare?ts='+Date.now(), {cache:'no-store'})
+        .then(r=>{ if(!r.ok) throw 0; return r.json(); })
+        .catch(()=>fetch('welfare.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
+        .then(j=>{ WELFARE=j; done(); }).catch(done);
+      if(LOWPRICE){ done(); }
+      else fetch('/api/lowprice?ts='+Date.now(), {cache:'no-store'})
+        .then(r=>{ if(!r.ok) throw 0; return r.json(); })
+        .catch(()=>fetch('lowprice.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
+        .then(j=>{ LOWPRICE=j; done(); }).catch(done);
+      return;
+    }
+    go(); return;
+  }
   if(filter === 'welfare'){ renderWelfare(); return; }  // 福利专区由 renderWelfare 接管
   if(filter === 'lowprice'){ renderLowprice(); return; }  // 低价好物由 renderLowprice 接管
-  const list = document.getElementById('list');
   if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
   document.getElementById('cnt').textContent = cur.length;
   document.getElementById('total').textContent = DEALS.length;
