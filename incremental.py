@@ -803,21 +803,32 @@ def _mc_refill_pool():
 
 
 def _mc_refill_touch(gid, ts=None):
-    """商品被轮播（或作为新品推过主群）后刷新时间戳，防扎堆重复。"""
+    """商品被轮播（或作为新品推过主群）后刷新时间戳，防扎堆重复；成功即清失败计数。"""
     pool = _mc_refill_pool()
     if str(gid) in pool:
         pool[str(gid)]["ts"] = ts if ts is not None else time.time()
+        pool[str(gid)].pop("fail_ts", None)
+        pool[str(gid)].pop("fail_cnt", None)
 
 
 def _mc_refill_fail(gid):
-    """转链失败退避（Boss 2026-11-03 实锤：单品转不链 → ts 不刷新 → 每轮都先选它 → 游标卡死）。
-    记 fail_ts，轮动选择时跳过 30 分钟内失败的条目；全部冷却中才兜底放开。"""
+    """转链失败处理（Boss 2026-11-03 实锤：单品转不链 → ts 不刷新 → 每轮都先选它 → 游标卡死）：
+    记 fail_ts 退避 30 分钟防堵游标；累计失败满 3 次（Boss 明令）直接踢出轮播池，
+    名额由后续新商品登记自动补上。"""
     try:
         pool = _mc_refill_pool()
         v = pool.get(str(gid))
-        if v is not None:
-            v["fail_ts"] = time.time()
+        if v is None:
+            return
+        v["fail_ts"] = time.time()
+        v["fail_cnt"] = int(v.get("fail_cnt") or 0) + 1
+        if v["fail_cnt"] >= 3:
+            pool.pop(str(gid), None)
             save_json(MC_REFILL_FILE, pool)
+            log(f"猫超轮播：{gid} 连续转链失败 {v['fail_cnt']} 次，已踢出轮播池（新商品登记自动补位）")
+        else:
+            save_json(MC_REFILL_FILE, pool)
+            log(f"猫超轮播：{gid} 转链失败第 {v['fail_cnt']} 次，退避 30 分钟（满 3 次踢出）")
     except Exception:
         pass  # 退避标记失败不影响主流程（下轮重试而已）
 
