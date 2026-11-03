@@ -170,11 +170,14 @@ def poll_union(log=print):
             pass
         items = _fetch_headlines(tab)
         if not items:
-            # h5st 过期或页面刚开没发过请求 → 重载页面触发新 XHR，等 6s 再试一次
+            # h5st 过期或页面刚开没发过请求 → 重载页面触发新 XHR，轮询等新 entries（最多 ~16s）
             tab.call("Page.enable")
             tab.call("Page.reload", {"ignoreCache": False})
-            time.sleep(6)
-            items = _fetch_headlines(tab)
+            for _ in range(8):
+                time.sleep(2)
+                items = _fetch_headlines(tab)
+                if items:
+                    break
     finally:
         tab.close()
     if not items:
