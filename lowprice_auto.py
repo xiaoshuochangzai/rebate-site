@@ -63,14 +63,19 @@ def fetch_lowprice():
             continue
         if price <= 0 or price > MAX_PRICE or rate <= MIN_RATE:
             continue
-        comm = round(price * rate / 100.0, 2)
+        # 券额/原价用于前端「券后省xx%」（Boss 2026-11-03：站内禁止出现佣金字样）
+        try:
+            quan = float(it.get("coupon_amount") or 0)
+            oprice = float(it.get("original_price") or 0)
+        except Exception:
+            quan, oprice = 0.0, 0.0
         out.append({
             "id": str(it.get("id") or ""),
             "goodsid": it.get("goodsid") or "",
             "t": it.get("d_title") or "",
             "price": ("%.1f" % price).rstrip("0").rstrip("."),
-            "rate": ("%.1f" % rate).rstrip("0").rstrip("."),
-            "comm": ("%.1f" % comm).rstrip("0").rstrip("."),
+            "quan": ("%.1f" % quan).rstrip("0").rstrip("."),
+            "oprice": ("%.1f" % oprice).rstrip("0").rstrip("."),
             "pic": it.get("main_pic") or "",
             "_kind": it.get("_kind") or "sell",
         })

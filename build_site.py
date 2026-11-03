@@ -688,10 +688,12 @@ function lpCard(it){
   const tpwd = it.tpwd ? '<div class="wf-tpwd" data-tpwd="'+esc(it.tpwd)+'" title="点击复制淘口令">口令 '+esc(it.tpwd)+'</div>' : '';
   const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">' : '';
   const link = esc(it.link);
-  const comm = it.comm ? '<span class="wf-coupon">佣金¥'+esc(it.comm)+'（'+esc(it.rate||'')+'%）</span>' : '';
+  // Boss 2026-11-03：站内只允许「券后省xx%」（券额÷原价），返利相关一律不展示
+  const q = parseFloat(it.quan||0), op = parseFloat(it.oprice||it.price||0);
+  const save = (q>0 && op>0) ? '<span class="wf-coupon">券后省'+Math.round(q/op*100)+'%</span>' : '';
   return '<div class="wf-row">'
     + '<a class="wf-thumb" href="'+link+'" target="_blank" rel="noopener">'+img+'</a>'
-    + '<div class="wf-mid"><div class="wf-title">'+esc(it.t)+'</div>'+comm+tpwd+'</div>'
+    + '<div class="wf-mid"><div class="wf-title">'+esc(it.t)+'</div>'+save+tpwd+'</div>'
     + '<div class="wf-right">'
     +   '<div class="wf-price"><i>到手价</i>¥'+esc(it.price||'')+'</div>'
     +   '<a class="wf-btn" href="'+link+'" target="_blank" rel="noopener">去抢购</a>'
