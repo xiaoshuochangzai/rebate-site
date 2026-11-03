@@ -148,6 +148,8 @@ def _tb_worker():
                         TB_DONE.put((("sell2" if kind == "sell2" else "bitui"), payload, conv))
                     ok_flag = True
                 else:
+                    if kind == "refill_mc":
+                        _mc_refill_fail(k)  # 失败退避 30 分钟，别让一条转不链的商品卡死轮动游标
                     log(f"{('高佣补位' if kind == 'refill' else ('猫超轮播' if kind == 'refill_mc' else '三榜'))} {k} 后台转链失败（无淘口令），下轮重试")
         except Exception as e:
             log(f"淘宝后台转链异常：{str(e)[:100]}")
@@ -772,6 +774,7 @@ MC_REFILL_QUALIFY_TOP = 120    # Boss 2026-11-02 明令：全天就轮 TOP120，
 MC_REFILL_MC_KEEP = 40         # Boss 2026-11-02 实锤池里猫超 0 条：猫超(is_chaoshi=1)保底配额，低佣不被服饰美妆挤光
 MC_REFILL_FS_KEEP_MAX = 40     # 服饰总配额 = 两个价位桶之和（20+20），此常量仅作文档注释保留
 MC_REFILL_FS_SPLIT = 20        # Boss 2026-11-02 明令：40 条服饰对半分价位——20 条 ≤150 元 + 20 条 ≥150 元，某侧不足名额让给另一侧
+MC_REFILL_FAIL_COOLDOWN = 1800  # Boss 2026-11-03 实锤单品转链失败卡死轮动游标（鸭宝宝连败 10 轮堵住全场）：失败退避 30 分钟再试
 _FS_KW = ('羽绒服', '棉服', '棉袄', '外套', '卫衣', '毛衣', '针织', '连衣裙', '半身裙', '裤', 'T恤', '衬衫',
           '打底', '套装', '夹克', '大衣', '风衣', '短袖', '长袖', '裙', '牛仔', '西服', '马甲', '冲锋衣',
           '防晒衣', '内衣', '文胸', '秋衣', '保暖', '睡衣', '家居服', '袜', '鞋', '靴', '拖鞋')
@@ -804,6 +807,19 @@ def _mc_refill_touch(gid, ts=None):
     pool = _mc_refill_pool()
     if str(gid) in pool:
         pool[str(gid)]["ts"] = ts if ts is not None else time.time()
+
+
+def _mc_refill_fail(gid):
+    """转链失败退避（Boss 2026-11-03 实锤：单品转不链 → ts 不刷新 → 每轮都先选它 → 游标卡死）。
+    记 fail_ts，轮动选择时跳过 30 分钟内失败的条目；全部冷却中才兜底放开。"""
+    try:
+        pool = _mc_refill_pool()
+        v = pool.get(str(gid))
+        if v is not None:
+            v["fail_ts"] = time.time()
+            save_json(MC_REFILL_FILE, pool)
+    except Exception:
+        pass  # 退避标记失败不影响主流程（下轮重试而已）
 
 
 def mc_refill_register(mc_list, log=print):
@@ -906,16 +922,22 @@ def mc_refill_tick(log=print):
         qualify.append((gid, v))
         if len(qualify) >= MC_REFILL_QUALIFY_TOP:
             break
-    # 资格池内按最久没发轮转（qualify 保持综合分序，这里按 ts 升序取），选中才占坑
+    # 资格池内按最久没发轮转（qualify 保持综合分序，这里按 ts 升序取），选中才占坑；
+    # 第一遍跳过 30 分钟内转链失败的（退避，防单品卡死游标），全冷却才第二遍放开
     picked = 0
-    for gid, v in sorted(qualify, key=lambda kv: kv[1].get("ts") or 0):
+    for _pass in (1, 2):
+        for gid, v in sorted(qualify, key=lambda kv: kv[1].get("ts") or 0):
+            if picked >= MC_REFILL_PER_TICK:
+                break
+            if _pass == 1 and (v.get("fail_ts") or 0) and now - v["fail_ts"] < MC_REFILL_FAIL_COOLDOWN:
+                continue
+            if not _tb_inflight_add("mcr_" + str(gid)):
+                continue  # 上一轮的还在转链中，跳过选下一条
+            TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
+            picked += 1
+            log(f"猫超轮播：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
         if picked >= MC_REFILL_PER_TICK:
             break
-        if not _tb_inflight_add("mcr_" + str(gid)):
-            continue  # 上一轮的还在转链中，跳过选下一条
-        TB_JOBS.put(("refill_mc", dict(v.get("it") or {})))
-        picked += 1
-        log(f"猫超轮播：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
     if picked == 0:
         log("猫超轮播：池空或全在转链中，本轮跳过")
 
