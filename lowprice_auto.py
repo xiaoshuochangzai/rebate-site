@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""低价好物榜自动更新（Boss 2026-11-03 明令：大淘客 top_sell 榜，价格≤30元 且 佣金率>10%）。
+"""低价好物榜自动更新（Boss 2026-11-03 明令：大淘客 top_sell 榜，佣金率>10%；
+价格走 price_cap 统一门槛：券后≤100 元、佣金高放宽至 ≤110，Boss 2026-11-05 明令）。
 
-一轮 = dtk_bitui.fetch_rank("sell") 拉榜 → 过滤（price≤30 & commission_rate>10）→
+一轮 = dtk_bitui.fetch_rank("sell") 拉榜 → 过滤（price_cap 统一门槛 & commission_rate>10）→
 与 lp_conv_cache.json 对比 → 新商品走 ratesurl v3 转链（复用 welfare_convert.conv）→
 lowprice.json 本地落盘（首屏兜底）→ cf_kv.put_lowprice 整包写 KV（前端 /api/lowprice 实时读）。
 数据无变化不写 KV（省额度）。只上站不推送（Boss 未要求进群）。
@@ -22,7 +23,6 @@ sys.path.insert(0, BASE_DIR)
 LOWPRICE_PATH = os.path.join("site", "lowprice.json")
 CACHE = "lp_conv_cache.json"
 MAX_ITEMS = 200          # 滚动保留条数
-MAX_PRICE = 200.0        # Boss 2026-11-03 明令：门槛放宽到 ≤200 元（原 30，纳入线报推送体系）
 MIN_RATE = 10.0          # Boss 明令：佣金率 >10%
 GAP = 0.8                # 转链条间间隔（防风控）
 
@@ -52,9 +52,12 @@ def _save_cache(c):
 
 
 def _filter_rank():
-    """拉 top_sell 榜并按 Boss 口径过滤：price≤200 且 commission_rate>10。
+    """拉 top_sell 榜并按 Boss 口径过滤：佣金率>10% + 统一价格门槛
+    （券后 ≤100 元；佣金高（佣金额≥10 元）放宽上浮 10% 至 ≤110。
+    佣率>10% 时价格 >100 元佣金额必然 >10，故放宽段自动生效）。
     返回 dtk 原始条目（含 commission_rate/d_title 等全字段），供上下两路各自映射。"""
     import dtk_bitui
+    import price_cap
     lst = dtk_bitui.fetch_rank("sell")
     out = []
     for it in lst:
@@ -63,7 +66,9 @@ def _filter_rank():
             rate = float(it.get("commission_rate") or 0)
         except Exception:
             continue
-        if price <= 0 or price > MAX_PRICE or rate <= MIN_RATE:
+        if rate <= MIN_RATE:
+            continue
+        if not price_cap.price_ok(price, price * rate / 100.0):
             continue
         out.append(it)
     return out

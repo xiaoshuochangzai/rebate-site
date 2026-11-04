@@ -681,28 +681,20 @@ def _tb_main_gid_add(gid):
     return True
 
 
-TB_MAX_PRICE = 300.0  # Boss 2026-11-03 明令：淘宝线报只发券后 ≤300 元
-
-
-def _price_over_max(price):
-    """券后价是否超上限（字段缺失/解析失败不误杀）。"""
-    try:
-        return float(price or 0) > TB_MAX_PRICE
-    except Exception:
-        return False
-
-
 def _tb_comm_ok(it):
-    """淘宝线报发群门槛（同一把尺）：①佣金 >= 4 元（Boss 2026-10-29）；②券后价 <= 300 元
-    （Boss 2026-11-03 明令）。dtk price 即到手价（券后口径）。
+    """淘宝线报发群门槛（同一把尺）：①佣金 >= 4 元（Boss 2026-10-29）；
+    ②券后价统一 ≤100 元，佣金高（佣金额 ≥10 元）放宽上浮 10% 至 ≤110
+    （Boss 2026-11-05 明令，price_cap 统一口径）。
     佣金金额 = commission_rate × price / 100（rate 已含膨胀补贴，
     实测 39.9×15.35%=6.12 与大淘客页面显示一致）。字段缺失/解析失败按 0 处理（不发）。"""
     try:
         rate = float(it.get("commission_rate") or 0)
         price = float(it.get("price") or 0)
-        if price > TB_MAX_PRICE:
+        comm = rate * price / 100.0
+        if comm < 4.0:
             return False
-        return rate * price / 100.0 >= 4.0
+        import price_cap
+        return price_cap.price_ok(price, comm)
     except Exception:
         return False
 
@@ -877,14 +869,15 @@ def mc_refill_register(mc_list, log=print):
             continue
     if n_new:
         log(f"轮播池登记：新面孔 {n_new} 个（池内 {len(pool)} 条）")
-    # Boss 2026-11-03：池内已有超价（券后 >300）旧货一并清出，不发高客单
+    # Boss 2026-11-05：池内旧货过统一价格门槛（券后 ≤100；100~110 需佣金额 ≥10；>110 清）
     cut = 0
+    import price_cap as _pc
     for gid in [g for g, v in pool.items()
-                if _price_over_max((v.get("it") or {}).get("price"))]:
+                if not _pc.price_ok((v.get("it") or {}).get("price"), v.get("comm") or 0)]:
         pool.pop(gid, None)
         cut += 1
     if cut:
-        log(f"轮播池清出超价 {cut} 条（券后 >{TB_MAX_PRICE:g} 元）")
+        log(f"轮播池清出超价 {cut} 条（券后 >100 元且高佣不足，门槛 100/高佣放宽 110）")
     # Boss 2026-11-03：低价好物固定 40 名额——超额按佣金降序退役最差的
     lp = [(g, v) for g, v in pool.items() if (v.get("it") or {}).get("_kind") == "lp"]
     if len(lp) > LP_SLOTS:
