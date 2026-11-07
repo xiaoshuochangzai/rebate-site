@@ -4,7 +4,10 @@ itemid(加密串) → s.tb.cn 短链 + 淘口令。缓存 wf_conv_cache.json 支
 失败条保留原 couponurl 不阻塞。"""
 import json, os, sys, time, io, urllib.request, urllib.parse
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+try:  # Windows 控制台 UTF-8 补丁：reconfigure 不替换 stdout 对象（监控日志 _Tee 无 buffer 属性）
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 

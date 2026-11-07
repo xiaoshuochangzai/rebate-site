@@ -159,6 +159,13 @@ def _tb_worker():
                     log(f"{('高佣补位' if kind == 'refill' else ('低价好物' if kind == 'lp' else ('猫超轮播' if kind == 'refill_mc' else '三榜')))} {k} 后台转链失败（无淘口令），下轮重试")
         except Exception as e:
             log(f"淘宝后台转链异常：{str(e)[:100]}")
+            # 轮动条目转链异常也要走失败退避（2026-11-07 实锤：lp 的 KeyError 异常
+            # 绕过 fail 记录 → 同一条每分钟被反复选中，猫超/淘宝整个被饿死）
+            if kind in ("refill_mc", "lp"):
+                try:
+                    _mc_refill_fail(str(payload.get("id") or ""))
+                except Exception:
+                    pass
         finally:
             if not ok_flag:  # 失败才释放（允许下轮重试）；成功交给 drain 释放
                 if kind == "tip":

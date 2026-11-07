@@ -214,7 +214,8 @@ def convert_item(it):
     p = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
     p = p.replace("+", "-").replace("/", "_").rstrip("=")
     jaw = dtk_convert._get_jaw()
-    referer = RANKS[it.get("_kind") or "bitui"][1]
+    # referer 仅作请求头；lp（低价好物）等非榜单 kind 不在 RANKS，兜底 bitui（2026-11-07 修 KeyError）
+    referer = RANKS.get(it.get("_kind") or "", RANKS["bitui"])[1]
     url = "%s?p=%s&referer=%s&new_refer=tkzy&jaw_uid=%s" % (
         PRIV_URL, p, urllib.parse.quote(referer, safe=""), urllib.parse.quote(jaw))
     try:
