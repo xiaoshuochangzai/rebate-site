@@ -132,6 +132,9 @@ def fetch_rank(kind="bitui"):
             # subsidy_rate 只是构成部分，验证 39.9×15.35%=6.12 与页面一致）
             "commission_rate": it.get("commission_rate") or "",
             "subsidy_rate": it.get("subsidy_rate") or "",
+            # 销量字段透传（Boss 2026-11-10：每 3 小时按销量重排两榜，缺了会全排成 0）
+            "sales_2h": it.get("sales_2h") or it.get("sales") or 0,
+            "sales": it.get("sales") or 0,
             # 天猫超市标记（Boss 2026-10-30：猫超好货/超级疯狂日等动态专区按商品级字段标注）
             # 注意：接口返回的 is_chaoshi 是字符串 "0"/"1"（"0" 是 truthy），必须显式归一
             "is_chaoshi": 1 if str(it.get("is_chaoshi") or "").strip() == "1" else 0,

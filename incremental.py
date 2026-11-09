@@ -788,6 +788,10 @@ def refill_register(s2_list, log=print):
 # ---- 猫超高佣轮播（Boss 2026-10-29 明令）：猫超每 5 分钟 3 条高佣，没有新的符合要求的
 # 进来就轮播旧的高佣（游标轮转：最久没发的优先、同分取高佣），直发主群不走 flush 配额。
 MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
+SALES_CYCLE_SEC = 3 * 3600   # Boss 2026-11-10 明令：每 3 小时（epoch 对齐→北京 8/11/14/17/20/23 点）重看两榜销量重排
+# 销量周期队列状态：每周期从池内按 kind 分组、各按 sales2h 降序建队列，全局每分钟 1 条交替取
+_sales_queues = {"cycle": None, "sell2": [], "mc": [], "lp": [], "cur": {"sell2": 0, "mc": 0, "lp": 0}, "turn": 0}
+
 MC_REFILL_INTERVAL_SEC = 60    # 每 1 分钟一轮（Boss 2026-11-02 明令）
 LP_SLOTS = 40                  # Boss 2026-11-03 明令：轮动池里低价好物固定 40 个名额（超额按佣金退役）
 LP_POLL_INTERVAL_SEC = 600     # 低价好物榜拉取登记节流（10 分钟一轮，与 tab 更新同节奏）
@@ -859,14 +863,20 @@ def mc_refill_register(mc_list, log=print):
     for it in mc_list:
         try:
             gid = str(it.get("id") or "")
-            if not gid or gid in pool or not _tb_comm_ok(it):
+            if not gid or not _tb_comm_ok(it):
                 continue
             it["_kind"] = it.get("_kind") or "mc"  # 专区条目=mc，2h 热销条目=sell2（fetch_rank 已注入）
-            comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
             try:
-                sales2h = int(float(it.get("sales_2h") or 0))
+                sales2h = int(float(it.get("sales_2h") or it.get("sales") or 0))
             except Exception:
                 sales2h = 0
+            if gid in pool:
+                # 已在池：只刷新销量（Boss 2026-11-10：每 3 小时重排要看最新销量），
+                # 不动 ts/reg_time，避免把发过的货洗回新面孔
+                pool[gid]["sales2h"] = sales2h
+                pool[gid]["it"]["sales_2h"] = it.get("sales_2h") or 0
+                continue
+            comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
             pool[gid] = {
                 "comm": round(comm, 2), "ts": 0, "reg_time": time.time(),
                 "tag": str(it.get("_tag") or ""), "sales2h": sales2h,
@@ -916,28 +926,43 @@ def mc_refill_register(mc_list, log=print):
         save_json(MC_REFILL_FILE, pool)
 
 
+def _sales_cycle_no():
+    """周期号（epoch 对齐 3 小时 → 北京时间 8/11/14/17/20/23/2/5 点整重排）。"""
+    return int(time.time()) // SALES_CYCLE_SEC
+
+
+def _sales_cycle_rebuild(log=print):
+    """周期开始：按池内最新销量，两榜（+低价好物）各自从高到低重建队列。
+    Boss 2026-11-10 明令：8点发一轮、11点重新看销量重排再发，以此类推。"""
+    pool = _mc_refill_pool()
+    qs = {}
+    cyc = _sales_cycle_no()
+    cycle_start = cyc * SALES_CYCLE_SEC
+    for kind in ("sell2", "mc", "lp"):
+        # ts 已落盘（2026-11-10 修）：本周期发过的剔出队列，重启重建也不会重发
+        items = [(g, v) for g, v in pool.items()
+                 if ((v.get("it") or {}).get("_kind") or "mc") == kind
+                 and (v.get("ts") or 0) < cycle_start]
+        items.sort(key=lambda kv: kv[1].get("sales2h") or 0, reverse=True)
+        qs[kind] = [g for g, _v in items]
+    _sales_queues.update(cycle=cyc, sell2=qs["sell2"], mc=qs["mc"], lp=qs["lp"],
+                         cur={"sell2": 0, "mc": 0, "lp": 0}, turn=0)
+    log(f"销量周期重排（3h）：热销{len(qs['sell2'])} 猫超专区{len(qs['mc'])} 低价{len(qs['lp'])}，各按近2h销量从高到低发")
+
+
 def mc_refill_tick(log=print):
-    """轮动调度（Boss 2026-11-03 方案B）：双榜全量池 + 新面孔优先插队——
-    每分钟 1 条：先发「从没发过」的新面孔（ts=0，综合分最高先上，同款变体归一去重）；
-    没有新面孔了，才从已发过的里按最久没发（ts 升序）轮老货（同款归一去重保留）。
-    失败退避 30 分钟 + 满 3 次踢出照旧；4 元门槛在登记时把关。"""
-    import math as _math
+    """轮动调度（Boss 2026-11-10 明令替换方案B）：以 3 小时为周期，每个周期按
+    【2小时热销榜】【猫超专区】（+低价好物保留参与）各自的最新销量从高到低排序，
+    全局每分钟 1 条按 热销→猫超→低价 交替取；下个周期重新看销量重排、从高到低再发。
+    失败退避 30 分钟 + 满 3 次踢出照旧；门槛在登记时把关。"""
     global _mc_refill_last
     now = time.time()
     if now - _mc_refill_last < MC_REFILL_INTERVAL_SEC:
         return
     _mc_refill_last = now
+    if _sales_queues["cycle"] != _sales_cycle_no():
+        _sales_cycle_rebuild(log)
     pool = _mc_refill_pool()
-    # 综合分 = 佣金 × (1 + log10(近2h销量+10))，销量佣金双高排前
-    def _score(v):
-        try:
-            return v.get("comm", 0) * (1 + _math.log10((v.get("sales2h") or 0) + 10))
-        except Exception:
-            return v.get("comm", 0)
-    # 同款归一键：去掉空白/标点/括号后取前 10 字——同款多链接变体归为一组，一轮只出一条
-    def _variant_key(v):
-        t = re.sub(r"[\s【】\[\]（）()!！,，。.:：;；\"'“”‘’\-—_/|｜＋+]", "", str((v.get("it") or {}).get("d_title") or ""))
-        return t[:10]
 
     def _cooling(v):
         return (v.get("fail_ts") or 0) and now - v["fail_ts"] < MC_REFILL_FAIL_COOLDOWN
@@ -949,45 +974,27 @@ def mc_refill_tick(log=print):
         if not _tb_inflight_add(str(gid) if is_lp else "mcr_" + str(gid)):
             return False  # 上一轮的还在转链中，跳过
         TB_JOBS.put(("lp" if is_lp else "refill_mc", dict(v.get("it") or {})))
-        log(f"{'低价好物' if is_lp else '猫超轮播'}：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
+        log(f"{'低价好物' if is_lp else ('热销榜' if k == 'sell2' else '猫超专区')}：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
         return True
 
-    picked = 0
-    # pass1：新面孔（ts=0）综合分降序，同款归一去重
-    fresh = sorted([(g, v) for g, v in pool.items() if not (v.get("ts") or 0)],
-                   key=lambda kv: _score(kv[1]), reverse=True)
-    seen_vk = set()
-    for gid, v in fresh:
-        if picked >= MC_REFILL_PER_TICK:
-            break
-        vk = _variant_key(v)
-        if vk:
-            if vk in seen_vk:
-                continue
-            seen_vk.add(vk)
-        if _cooling(v):
-            continue
-        if _try(gid, v):
-            picked += 1
-    # pass2：老货轮转（ts 升序最久没发优先），全池同款归一去重 + 失败退避跳过
-    if picked == 0:
-        old = sorted([(g, v) for g, v in pool.items() if (v.get("ts") or 0) > 0],
-                     key=lambda kv: kv[1].get("ts") or 0)
-        seen_vk = set()
-        for gid, v in old:
-            if picked >= MC_REFILL_PER_TICK:
-                break
-            vk = _variant_key(v)
-            if vk:
-                if vk in seen_vk:
-                    continue
-                seen_vk.add(vk)
-            if _cooling(v):
-                continue
+    # 三队列交替取（总速率仍 1 条/分钟），各队列游标单调推进：本周期每条只发一次
+    for _ in range(3):
+        kind = ("sell2", "mc", "lp")[_sales_queues["turn"] % 3]
+        _sales_queues["turn"] += 1
+        q = _sales_queues[kind]
+        i = _sales_queues["cur"][kind]
+        while i < len(q):
+            gid = q[i]
+            i += 1
+            _sales_queues["cur"][kind] = i
+            v = pool.get(gid)
+            if not v or _cooling(v):
+                continue  # 已退役/失败退避中，跳过不阻塞队列
+            if (v.get("ts") or 0) >= _sales_queues["cycle"] * SALES_CYCLE_SEC:
+                continue  # 本周期已发过（ts 落盘，重启重建队列后同样不重发）
             if _try(gid, v):
-                picked += 1
-    if picked == 0:
-        log("猫超轮播：池空/全在转链中/全在退避，本轮跳过")
+                return
+    log("销量周期：三队列本周期均已发完/全在退避，等下个 3 小时周期重排")
 
 
 # ---- 专区动态发现（Boss 2026-10-30 明令）：自动跟进大淘客 /xp/1111 专区的新增与删减。
@@ -1078,8 +1085,8 @@ def poll_sell2():
     本函数不再承担任何推送——只做两件事：
       1. 逐专区拉取 + 登记轮播池（主群/外部群轮动的粮道，不受双11窗口限制）
       2. 2h 热销榜拉取 + 登记补位池（补位推送已停，仅存档）
-    双11 换源窗口（sell2_active，至 11-13）只管 2h 榜接口本身；窗口过期专区登记照常，
-    否则轮播池断粮、主群淘宝僵死。原外部群新品推送链路（_try_put→sell2→enqueue）已摘。
+    2h 热销榜为「每 3 小时按销量重排」的常设粮道（Boss 2026-11-10），不再受双11窗口
+    （SELL2_UNTIL=11-13）停用，否则 3 天后热销队列断粮。原外部群新品推送链路已摘。
     """
     import dtk_bitui
     # Boss 2026-10-30 明令：专区动态发现（猫超好货28/超级疯狂日27等），按白名单逐 tag 拉取合并
@@ -1093,13 +1100,11 @@ def poll_sell2():
         else:
             log(f"专区[{tname}](tag={tag}) 本轮拉取为空/失败")
         time.sleep(0.3)
-    if dtk_bitui.sell2_active():
-        s2 = dtk_bitui.fetch_rank("sell2")
-        if not s2:
-            log("2小时热销榜本轮拉取为空/失败，跳过")
-    else:
-        s2 = []
-        log("双11换源窗口（SELL2_UNTIL）已过期，2h榜跳过——专区登记不受影响")
+    # Boss 2026-11-10 明令：2h 热销榜是「每 3 小时按销量重排」的常设粮道，
+    # 双11 换源窗口（SELL2_UNTIL=11-13）不再停用，否则 3 天后热销队列断粮
+    s2 = dtk_bitui.fetch_rank("sell2")
+    if not s2:
+        log("2小时热销榜本轮拉取为空/失败，跳过")
     try:
         mc_refill_register(s2, log=log)  # 方案B：2h 热销榜也全量登记进轮播池（_kind=sell2，与专区同池轮动）
         mc_refill_register(mc, log=log)  # 专区高佣商品进轮播池（主群+外部群轮动的粮道）
