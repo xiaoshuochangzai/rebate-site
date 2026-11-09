@@ -791,6 +791,8 @@ MC_REFILL_FILE = os.path.join(BASE_DIR, "tb_refill_mc.json")
 MC_REFILL_INTERVAL_SEC = 60    # 每 1 分钟一轮（Boss 2026-11-02 明令）
 LP_SLOTS = 40                  # Boss 2026-11-03 明令：轮动池里低价好物固定 40 个名额（超额按佣金退役）
 LP_POLL_INTERVAL_SEC = 600     # 低价好物榜拉取登记节流（10 分钟一轮，与 tab 更新同节奏）
+VARIANT_COOLDOWN_SEC = 7200    # Boss 2026-11-10 明令：同款跨轮冷却 2 小时（戴可思连发实锤后的防扎堆）
+_VARIANT_LAST = {}             # variant_key -> 上次入队时间（内存态，重启清零可接受）
 MC_REFILL_PER_TICK = 1         # 每轮 1 条
 MC_REFILL_MAX = 800            # Boss 2026-11-03 方案B：双榜全量登记、不再裁 TOP120；池超 800 兜底退役最老的已发条目
 MC_REFILL_OLD_DAYS = 3         # 入池超 3 天且已发过的老货自动退役（防池无限膨胀）
@@ -815,12 +817,17 @@ def _mc_refill_pool():
 
 
 def _mc_refill_touch(gid, ts=None):
-    """商品被轮播（或作为新品推过主群）后刷新时间戳，防扎堆重复；成功即清失败计数。"""
+    """商品被轮播（或作为新品推过主群）后刷新时间戳，防扎堆重复；成功即清失败计数。
+    2026-11-10 修死循环（Boss 实锤：戴可思一晚重复发 20+ 次）：①同步续期 reg_time——
+    否则「过 3 天退役」会把刚 touch 的老货 pop 出池，榜单里还在 → 重登记 ts 归零 →
+    又立刻被选中 → 无限循环；②游标落盘——重启后 ts 全丢，852 条瞬间变回新面孔。"""
     pool = _mc_refill_pool()
     if str(gid) in pool:
         pool[str(gid)]["ts"] = ts if ts is not None else time.time()
+        pool[str(gid)]["reg_time"] = pool[str(gid)]["ts"]
         pool[str(gid)].pop("fail_ts", None)
         pool[str(gid)].pop("fail_cnt", None)
+        save_json(MC_REFILL_FILE, pool)
 
 
 def _mc_refill_fail(gid):
@@ -937,12 +944,21 @@ def mc_refill_tick(log=print):
     def _cooling(v):
         return (v.get("fail_ts") or 0) and now - v["fail_ts"] < MC_REFILL_FAIL_COOLDOWN
 
+    def _vk_cooling(vk):
+        # 跨轮同款冷却（Boss 2026-11-10 实锤「两个都是一样的」）：单轮 seen_vk 只管本轮，
+        # 同款变体（如戴可思 4 个 SKU）分属不同轮时仍会前后脚发。2 小时内同款只发一次。
+        if not vk:
+            return False
+        last = _VARIANT_LAST.get(vk)
+        return last is not None and now - last < VARIANT_COOLDOWN_SEC
+
     def _try(gid, v):
         k = ((v.get("it") or {}).get("_kind")) or "mc"
         is_lp = (k == "lp")
         # inflight 键与 drain_tb_done 的 discard 键严格配对：refill_mc="mcr_"+gid，lp=gid
         if not _tb_inflight_add(str(gid) if is_lp else "mcr_" + str(gid)):
             return False  # 上一轮的还在转链中，跳过
+        _VARIANT_LAST[_variant_key(v)] = now  # 同款冷却从入队即计时
         TB_JOBS.put(("lp" if is_lp else "refill_mc", dict(v.get("it") or {})))
         log(f"{'低价好物' if is_lp else '猫超轮播'}：{gid} 佣金{v.get('comm', 0):.1f}元 销量2h{v.get('sales2h', 0)} | {((v.get('it') or {}).get('d_title') or '')[:20]}")
         return True
@@ -962,6 +978,8 @@ def mc_refill_tick(log=print):
             seen_vk.add(vk)
         if _cooling(v):
             continue
+        if _vk_cooling(vk):
+            continue
         if _try(gid, v):
             picked += 1
     # pass2：老货轮转（ts 升序最久没发优先），全池同款归一去重 + 失败退避跳过
@@ -978,6 +996,8 @@ def mc_refill_tick(log=print):
                     continue
                 seen_vk.add(vk)
             if _cooling(v):
+                continue
+            if _vk_cooling(vk):
                 continue
             if _try(gid, v):
                 picked += 1
