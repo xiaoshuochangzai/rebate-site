@@ -403,7 +403,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
       <div class="title">平台</div>
       <ul id="plat"></ul>
       <div class="srch">
-        <input id="kw" placeholder="全站搜索：线报+福利清单+低价好物" autocomplete="off">
+        <input id="kw" placeholder="全站搜索：线报+低价好物" autocomplete="off">
         <button class="sbtn" id="btnSearch">搜索</button>
       </div>
     </div>
@@ -443,7 +443,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 <script>
 let DEALS = __DATA__;
 const PAGE_SIZE = 60;
-let filter = 'welfare', kw = '', shown = 0;  // 默认进站显示「双11福利清单」（Boss 2026-10-22 明令）
+let filter = '2', kw = '', shown = 0;  // 默认进站显示京东（Boss 2026-11-12 明令：双11福利清单 tab 下线）
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function escWithLinks(ln){
   // 转义整行并把行内所有 http(s) 链接转成可点链接（修复行中券链显示灰色不可点）
@@ -602,6 +602,8 @@ function cardHtml(d){
 function matched(){
   const k = kw.toLowerCase();
   const pool = DEALS.filter(d=>{
+    // Boss 2026-11-12：拼多多只展示券后 ≤9.9 元（存量超价老货前端隐藏，数据不删）
+    if(String(d.platform)==='4' && parseFloat(d._couponAfterPrice||d.price||0) > 9.9) return false;
     // 顶搜 = 跨全平台（淘宝+京东）；只在无关键词时才按当前分类筛
     if(!k && filter!=='all' && d.platform!==filter) return false;
     if(!k) return true;
@@ -615,22 +617,22 @@ function matched(){
     const head = copyTextOf(d).toLowerCase().split('\\n').slice(0, 2).join('\\n');
     (head.indexOf(k)>=0 ? strong : weak).push(d);
   });
-  // Boss 2026-11-03：搜索同时覆盖「双11福利清单」「低价好物」两个专区（排在普通线报之后）
-  const wfHits = [];
-  ((WELFARE && WELFARE.items) || []).forEach(it=>{
-    if((it.t||'').toLowerCase().indexOf(k)>=0) wfHits.push({_wf:1, it:it});
-  });
+  // Boss 2026-11-12：福利清单 tab 下线，搜索也不再返回福利清单条目（恢复=取消下面注释）
+  // const wfHits = [];
+  // ((WELFARE && WELFARE.items) || []).forEach(it=>{
+  //   if((it.t||'').toLowerCase().indexOf(k)>=0) wfHits.push({_wf:1, it:it});
+  // });
   const lpHits = [];
   ((LOWPRICE && LOWPRICE.items) || []).forEach(it=>{
     if((it.t||'').toLowerCase().indexOf(k)>=0) lpHits.push({_lp:1, it:it});
   });
-  return strong.concat(weak).concat(wfHits).concat(lpHits);
+  return strong.concat(weak).concat(lpHits);
 }
 let cur = [];
 function render(reset){
   const list = document.getElementById('list');
   if(kw){
-    // 搜索态（Boss 2026-11-03：关键词同时搜普通线报+福利清单+低价好物）；专区数据没加载先现拉
+    // 搜索态（Boss 2026-11-03：关键词搜普通线报+低价好物；福利清单已下线）；专区数据没加载先现拉
     const go = ()=>{
       document.getElementById('welfareBar').style.display = 'none';
       if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
@@ -642,13 +644,14 @@ function render(reset){
       shown += slice.length;
       document.getElementById('more').style.display = shown < cur.length ? 'block' : 'none';
     };
-    if(!WELFARE || !LOWPRICE){
-      let n = 0; const done = ()=>{ if(++n===2) go(); };
-      if(WELFARE){ done(); }
-      else fetch('/api/welfare?ts='+Date.now(), {cache:'no-store'})
-        .then(r=>{ if(!r.ok) throw 0; return r.json(); })
-        .catch(()=>fetch('welfare.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
-        .then(j=>{ WELFARE=j; done(); }).catch(done);
+    if(!LOWPRICE){
+      let n = 0; const done = ()=>{ if(++n===1) go(); };
+      // Boss 2026-11-12 福利清单下线：不再拉 welfare.json / /api/welfare（恢复时连同上面 wfHits 一起取消注释）
+      // if(WELFARE){ done(); }
+      // else fetch('/api/welfare?ts='+Date.now(), {cache:'no-store'})
+      //   .then(r=>{ if(!r.ok) throw 0; return r.json(); })
+      //   .catch(()=>fetch('welfare.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
+      //   .then(j=>{ WELFARE=j; done(); }).catch(done);
       if(LOWPRICE){ done(); }
       else fetch('/api/lowprice?ts='+Date.now(), {cache:'no-store'})
         .then(r=>{ if(!r.ok) throw 0; return r.json(); })
@@ -1008,7 +1011,8 @@ function buildTabs(){
   DEALS.forEach(d=>{ if(d.platform) seen[d.platform]=1; });
   const arr = PORDER.filter(p=>seen[p]);
   Object.keys(seen).forEach(p=>{ if(arr.indexOf(p)<0) arr.push(p); });
-  arr.push('welfare');  // 双11福利清单：独立专区 tab，固定最后
+  // Boss 2026-11-12 明令：双11活动结束，网页端去掉【双11福利清单】tab；恢复=取消下一行注释
+  // arr.push('welfare');  // 双11福利清单：独立专区 tab，固定最后
   arr.push('lowprice');  // 低价好物榜：独立专区 tab（Boss 2026-11-03 明令），压轴
   document.getElementById('plat').innerHTML = arr.map(p=>
     '<li data-p="'+esc(p)+'"'+(p===String(filter)?' class="active"':'')+'>'+(p==='welfare'?'双11福利清单':(p==='lowprice'?'低价好物':esc(PNAME[p]||p)))+'</li>').join('');

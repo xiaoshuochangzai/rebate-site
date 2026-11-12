@@ -420,7 +420,7 @@ def _bump_sell2_tail():
 BITUI_MAX_PER_ROUND = 3  # 单轮最多转链几条必推榜新品（防单轮过久饿着京东）
 PDD_SEEN_FILE = os.path.join(BASE_DIR, "seen_pdd.json")  # 拼多多已见商品 goods_id
 PDD_MAX_PER_ROUND = 3  # 单轮最多转链几条拼多多新品
-PDD_MAX_PRICE = 50    # Boss 2026-11-03 明令：拼多多线报只上券后 ≤50 元
+PDD_MAX_PRICE = 9.9   # Boss 2026-11-12 明令：拼多多只上「9.9元商品」= 券后 ≤9.9 元（原 50）
 
 # 双11福利清单自动更新（Boss 2026-10-22 拍板：每 10 分钟一轮，独立线程）
 WELFARE_EVERY = 600  # 秒
@@ -1404,10 +1404,12 @@ def main():
         wa = _welfare_mod()
         import lowprice_auto  # 低价好物榜（Boss 2026-11-03 明令），与福利同节奏共用线程
         while True:
-            try:
-                wa.run_once()
-            except Exception as e:
-                print(f"福利清单更新异常：{str(e)[:120]}")
+            # Boss 2026-11-12 明令：双11福利清单网页端下线，后台采集/转链/写KV一并暂停（省额度）；
+            # 恢复=取消下面两行注释（与 build_site.py 的 welfare tab 同步恢复）
+            # try:
+            #     wa.run_once()
+            # except Exception as e:
+            #     print(f"福利清单更新异常：{str(e)[:120]}")
             try:
                 lowprice_auto.run_once(log=print)
             except Exception as e:
