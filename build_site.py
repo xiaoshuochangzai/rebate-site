@@ -913,10 +913,13 @@ kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.t
 const listEl = document.getElementById('list');
 listEl.addEventListener('click', e=>{
   // 卡片链接点击统计（Boss 2026-10-28 明令）：上报后放行默认跳转，不阻断用户
-  const la = e.target.closest('a.lnki, a.wf-btn');
+  // 2026-11-12 修：商品/券链接真实类名是 a.lnk（原选择器只写 a.lnki 行内链接），
+  // 导致京东/淘宝/拼多多卡片链接点击一条都没记上；同时补 wf-thumb 缩略图
+  const la = e.target.closest('a.lnki, a.lnk, a.wf-btn, a.wf-thumb');
   if(la){
     const card = la.closest('.report-item');
-    const plat = (card && card.dataset.plat) || (la.classList.contains('wf-btn') ? 'welfare' : 'unk');
+    const plat = card ? card.dataset.plat
+      : (la.classList.contains('wf-btn') || la.classList.contains('wf-thumb') ? filter : 'unk');
     stat('link_'+({'2':'jd','1':'tb','4':'pdd'}[plat]||plat));
   }
   // 福利卡口令：点击复制淘口令

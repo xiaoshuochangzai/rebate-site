@@ -339,7 +339,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
   <div class="rtbar">
     <span class="rt-live"><i class="rt-dot"></i>实时更新</span>
     <span class="rt-sep"></span>
-    <span class="rt-txt">截止 <b class="rt-num">09:26</b></span>
+    <span class="rt-txt">截止 <b class="rt-num">09:50</b></span>
     <span class="rt-sep"></span>
     <span class="rt-txt">今日更新 <b class="rt-num" id="cnt">0</b> 条</span>
     <span class="rt-sep"></span>
@@ -354,7 +354,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 
 <footer>
   数据每小时自动更新 · 双击卡片（或点顶部红条）复制完整文案<br>
-  好价线报 · 2026-11-12 09:26:10
+  好价线报 · 2026-11-12 09:50:04
 </footer>
 
 <button id="top" title="回到顶部">↑</button>
@@ -838,10 +838,13 @@ kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.t
 const listEl = document.getElementById('list');
 listEl.addEventListener('click', e=>{
   // 卡片链接点击统计（Boss 2026-10-28 明令）：上报后放行默认跳转，不阻断用户
-  const la = e.target.closest('a.lnki, a.wf-btn');
+  // 2026-11-12 修：商品/券链接真实类名是 a.lnk（原选择器只写 a.lnki 行内链接），
+  // 导致京东/淘宝/拼多多卡片链接点击一条都没记上；同时补 wf-thumb 缩略图
+  const la = e.target.closest('a.lnki, a.lnk, a.wf-btn, a.wf-thumb');
   if(la){
     const card = la.closest('.report-item');
-    const plat = (card && card.dataset.plat) || (la.classList.contains('wf-btn') ? 'welfare' : 'unk');
+    const plat = card ? card.dataset.plat
+      : (la.classList.contains('wf-btn') || la.classList.contains('wf-thumb') ? filter : 'unk');
     stat('link_'+({'2':'jd','1':'tb','4':'pdd'}[plat]||plat));
   }
   // 福利卡口令：点击复制淘口令
