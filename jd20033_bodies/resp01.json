@@ -1,0 +1,145 @@
+URL: https://jingfen.jd.com/item?u_act_p=union-activity&union_page_id=20033
+
+<!doctype html><html lang="en"><head><meta content="text/html; charset=utf-8" http-equiv="Content-Type"><meta content="width=device-width,initial-scale=1,user-scalable=no" name="viewport"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-touch-fullscreen" content="yes"><meta name="format-detection" content="telephone=no,address=no"><meta name="apple-mobile-web-app-status-bar-style" content="white"><meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"><meta name="referrer" content="no-referrer-when-downgrade"><meta http-equiv="Pragma" content="no-cache"/><meta http-equiv="Cache-Control" content="no-cache"/><meta http-equiv="Expires" content="0"/><meta name="keywords" content=""/><meta name="description" content="京东 活动"/><link rel="shortcut icon" href="//www.jd.com/favicon.ico" type="image/x-icon"/><link rel="dns-prefetch" href="//wl.jd.com"/><link rel="dns-prefetch" href="//gias.jd.com"/><link rel="dns-prefetch" href="//h5.360buyimg.com"/><link rel="dns-prefetch" href="//log.jd.com"/><link rel="preload" href="//wl.jd.com/unify.min.js" as="script"/><link rel="preload" href="//storage.360buyimg.com/jsresource/risk/handler.js" as="script"/><link rel="preload" href="//storage.360buyimg.com/babelnode/jd-jssdk/4.7.5/jd-jssdk.js" as="script"/><script src="//wl.jd.com/unify.min.js"></script><script defer="defer" async src="https://storage.360buyimg.com/unionfe/libs/lottie/lottie.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script><script>// TODO 设置埋点id</script><title>京东商城</title><script>// web-view下的页面内
+      function wxReady() {
+        console.log(window.__wxjs_environment === 'miniprogram') // true
+      }
+      if (!window.WeixinJSBridge || !WeixinJSBridge.invoke) {
+        document.addEventListener('WeixinJSBridgeReady', wxReady, false)
+      } else {
+        wxReady()
+      }</script><script>!function(n){function f(){var e=n.document.documentElement,w=e.getBoundingClientRect().width,x=23.4375*w/375;e.style.fontSize=x>=40?"40px":x<=20?"20px":x+"px"}n.addEventListener("resize",(function(){f()})),f()}(window);</script><script>!function(n){function e(){var e=n.document.documentElement,t=e.getBoundingClientRect().width;e.style.fontSize=t>=640?"40px":t<=320?"20px":t/320*20+"px"}n.addEventListener("resize",(function(){e()})),e()}(window);</script><script src="//storage.360buyimg.com/babelnode/jd-jssdk/4.7.5/jd-jssdk.js"></script><script>!function(){"use strict";!function(e,r,n,t){var o={pre_m:[],run:function(e){for(var r=arguments.length,n=new Array(r>1?r-1:0),t=1;t<r;t++)n[t-1]=arguments[t];o.pre_m.push({method:e,args:n})}};e[n]=o;var a=function(e,r){void 0===o[e]&&(o[e]=[]),o[e].push(r)};"addEventListener"in e&&"removeEventListener"in e&&(o.errorHandler=function(r){var n=(r=r||e.event).target||r.srcElement;n instanceof Element||n instanceof HTMLElement?a("s_err",r):a("err",r)},o.rejectionHandler=function(e){a("reject",e)},e.addEventListener("error",o.errorHandler,!0),e.addEventListener("unhandledrejection",o.rejectionHandler,!0)),"PerformanceLongTaskTiming"in e&&(o.entries=[],o.observer=new PerformanceObserver((function(e){o.entries=o.entries.concat(e.getEntries())})), o.observer && o.observer.observe({entryTypes:["longtask"]}));var s=e.document.createElement("script");s.src=r,s.crossOrigin="anonymous",s.setAttribute("globalName".toLowerCase(),n),s.setAttribute("preCollect".toLowerCase(),t),e.document.getElementsByTagName("head")[0].appendChild(s)}(window,"https://storage.360buyimg.com/dev-static/dra/probe-web/1.2.6/browser.js","dra","__dra_PreCollectedData__")}();</script><script>window.dra.run('init', { aid: '0ac2ecfc78649c1253377e64ca5804d7' })
+      window.dra.run('start')</script><script>// 桥方法api调用前先注册，https://opendoc.jd.com/jd-jssdk/v4/jd-webview.html#registercode
+      try {
+        jmfe.registerCode('1314bd90-2d91-48de-9d5b-526e97219a73')
+      } catch (error) {}</script><script>try {
+        window.jmfe.jsagentInit({
+          flag: 141 // 运维平台区分渠道，烛龙平台申请
+        })
+        // 性能监控上报初始化
+        window.jmfe.profilerInit({
+          flag: 141, // 运维平台区分渠道，烛龙平台申请
+          autoReport: true, // 是否自动上报,默认 false
+          autoAddStaticReport: true, // 自动添加静态资源上报，默认 false
+          autoAddApiReport: true, // 自动添加接口耗时上报，默认 false
+          performanceReportTime: 8000, // 性能上报延迟时间 默认 8000ms，因部分性能指标需要延迟才能收集到，低于8s可能会遗漏相关指标
+          profilingRate: 0.1 // 上报率
+        })
+        try {
+          // 获取本地的cookie，之后与桥方法里的对比
+          const reg = new RegExp(`(?:^|\\s?)unpl=([^;]*)`)
+          const val = document.cookie.match(reg)
+          const initCookie = val &&  val[1]
+          window.unplCookie = initCookie
+        } catch (error) {
+          console.log(error)
+        }
+        // 上报 js 加载时长
+        window.jmfe.profilerAddStaticFile([
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/wl.jd.com/unify.min.js",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/open/js/jweixin-1.4.0.js",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/jsresource/risk/handler.js",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/plugin/union_order_weblog_1.0.18.min.js",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/dest/wq.wxapi.ext.cd96ff0c8b.js", // indexOf() 适配
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/jdwebm.js?v=unionActivity",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/gias.jd.com/js/m-tk.js",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/babelnode/jd-jssdk/4.7.5/jd-jssdk.js",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/jad-hybrid@0.0.6.js",
+          "//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/union/mobile/theup-feedback.js",
+          /js\/.*\.js/gi, // name.match(regex)适配
+          /\w*.css$/gi // name.match(regex)适配
+        ])
+      } catch (error) {
+        console.log('error: ', error);
+      }</script><script src="https://storage.360buyimg.com/jsresource/risk/handler.js"></script><script>try {
+          window.jmfe.profilerModuleReport([{
+          number: 1,
+          key: 'headSdkLoad',
+          time: Date.now() -  window?.performance?.timing?.fetchStart,
+          desc: '页面开始加载到head里sdk执行完'
+          }],  location.search.match(new RegExp('(\\?|&)' + 'union_page_id' + '=(.*?)(&|$)'))?.[2] || '')
+      } catch (error) {
+        console.log(error)
+      }</script><script src="https://storage.360buyimg.com/webcontainer/js_security_v3_0.1.5.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/vendor-49d0a293.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/vendor-efdee510.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/vendor-f82e0cd2.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/vendor-27545368.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/vendor-5397d65f.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/vendor-866ab763.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/utils.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/app.aee72997.js"></script><script defer="defer" src="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/js/react-vendor.aee72997.js"></script><link href="//storage.360buyimg.com/pubfree-bucket/union-activity/prod/6ec0a98/css/app.ff9d17885d561e58afb1.css" rel="stylesheet"></head><style>html,body{-webkit-tap-highlight-color: rgba(0, 0, 0, 0);}</style><body data-uniontoken="Q5jnZdUC1NZu~RMaucHemA--"><div id="app"></div></body><script>// 通天塔活动加密id
+    var jdUnionGetCouponlayer_actId = '3xhndFdJ6CRorJ9XctYN71aqpfee'
+    try {
+      function getQueryStr(key) {
+        const reg = new RegExp('(\\?|&)' + key + '=(.*?)(&|$)')
+        const val = window.location.search.match(reg)
+        return val ? val[2] : ''
+      }
+      // 存在unionActId才展示红包sdk
+      if(getQueryStr('unionActId')) {
+        setTimeout(() => {
+          // // 2) 引入样式
+          var link = document.createElement('link')
+          link.setAttribute(
+            'href',
+            'https://storage.360buyimg.com/swm-stable/union_coupon_sdk/app.css?t=20260430'
+          )
+          link.setAttribute('rel', 'stylesheet')
+          var head = document.querySelector('head')
+          head.appendChild(link)
+          // 3)动态创建链接 的方式引入js
+          var script = document.createElement('script')
+          script.setAttribute(
+            'src',
+            'https://storage.360buyimg.com/swm-stable/union_coupon_sdk/main.js?t=20260430' 
+          )
+          script.setAttribute('type', 'text/javascript')
+          var body = document.querySelector('body')
+          body.appendChild(script)
+        }, 200)
+      }
+      // 存在loadnn=1才展示暖暖红包
+      else if(getQueryStr('loadnn')) {
+        setTimeout(() => {
+          // // 2) 引入样式
+          var link = document.createElement('link')
+          link.setAttribute(
+            'href',
+            'https://storage.jd.com/swm-stable/union_coupon_sdk_nn/app.css'
+          )
+          link.setAttribute('rel', 'stylesheet')
+          var head = document.querySelector('head')
+          head.appendChild(link)
+          // 3)动态创建链接 的方式引入js
+          var script = document.createElement('script')
+          script.setAttribute(
+            'src',
+            'https://storage.jd.com/swm-stable/union_coupon_sdk_nn/main.js'
+          )
+          script.setAttribute('type', 'text/javascript')
+          var body = document.querySelector('body')
+          body.appendChild(script)
+        }, 200)
+      }
+      // 天降福利玩法
+      else if(getQueryStr('unionGodsend')) {
+        setTimeout(() => {
+          // // 2) 引入样式
+          var link = document.createElement('link')
+          link.setAttribute(
+            'href',
+            'https://storage.jd.com/swm-stable/union_coupon_godsend/app.css'
+          )
+          link.setAttribute('rel', 'stylesheet')
+          var head = document.querySelector('head')
+          head.appendChild(link)
+          // 3)动态创建链接 的方式引入js
+          var script = document.createElement('script')
+          script.setAttribute(
+            'src',
+            'https://storage.jd.com/swm-stable/union_coupon_godsend/main.js'
+          )
+          script.setAttribute('type', 'text/javascript')
+          var body = document.querySelector('body')
+          body.appendChild(script)
+        }, 200)
+      }
+    } catch (error) {}</script><script>var bp_bizid = "union-activity";</script><script src="https://storage.360buyimg.com/jsresource/ws_js/jdwebm.js?v=unionActivity" defer="defer"></script><script src="https://storage.360buyimg.com/unionfe/plugin/union_order_weblog_1.0.18.min.js" crossorigin="anonymous"></script><script>try {
+      window.unionViceClickLog && window.unionViceClickLog.setAutoReport(false);
+    } catch (error) {
+      // TODO 上报错误
+      console.error("unionViceClickLog, autoReport err = ", error);
+    }</script></html>
