@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """京东低价好物（折京客 API）—— Boss 2026-11-12 拍板执行。
 
-口径：佣金比例>=10% + 券后价<=60元 + 月销量>=1000（api_all 三参数直接筛，本地再校验）。
+口径：佣金比例>=10% + 券后价 3~60 元 + 月销量>=1000（api_all 三参数直接筛，本地再校验）；
+      同款不同链接只留一条（标题前10字分组留最低价）。
+数据源：①全站领券商品库 api_all；②20032 页面「自营热卖榜」= 折京客 eliteId=41 频道。
+展示排序：每 2 条 <20 元 穿插 2 条 >=20 元，组内按销量降序，剩余组降序补齐。
 每 3 小时一轮（对齐北京时间 8/11/14/17/20/23 点整，Boss 2026-11-12 明令）：
   1. 分页拉全量（price=0.0-60 & commission_rate_start=10 & sale_num_start=1000）
   2. 镜像：以本轮源站命中 tao_id 集合为准，本地只保留集合内条目 —— 源站消失本站跟着下架，
@@ -27,6 +30,9 @@ CACHE = os.path.join(BASE_DIR, "lp_jd_conv_cache.json")
 API_BASE = "http://api.zhetaoke.com:20000/api/"
 API_ALL = API_BASE + "api_all.ashx"
 API_CONV = API_BASE + "open_jing_union_open_promotion_byunionid_get.ashx"
+API_JINGFEN = API_BASE + "open_jing_union_open_goods_jingfen_query.ashx"
+CHANNEL_ID = 41        # 20032 页面「自营热卖榜」对应折京客京粉精选频道 eliteId=41
+SPLIT_PRICE = 20.0     # Boss 2026-11-12：低价组 <20 元 / 高价组 >=20 元
 MAX_PRICE = 60.0
 MIN_PRICE = 3.0         # Boss 2026-11-12 明令：券后价 >=3 元（0.01/1元 那种凑单例剔除）
 MIN_RATE = 10.0
@@ -69,8 +75,8 @@ def _save(path, obj):
     os.replace(tmp, path)
 
 
-def fetch_all(log=_log):
-    """分页拉三条件全量，返回 {tao_id: 原始条目}；失败返回空 dict。"""
+def fetch_api_all(log=_log):
+    """数据源①：全站领券商品库，分页拉三条件全量；失败返回空 dict。"""
     c = _conf()
     s = _session()
     out = {}
@@ -99,6 +105,106 @@ def fetch_all(log=_log):
             break
         time.sleep(0.2)
     log("源站三条件全量 %d 条（%d 页）" % (len(out), page))
+    return out
+
+
+def fetch_channel(log=_log):
+    """数据源②：20032 页面「自营热卖榜」= 折京客京粉精选频道 eliteId=41。
+    映射成与 api_all 同形字段；失败/返回 0 条返回 None（整轮跳过，防镜像误删）。"""
+    c = _conf()
+    s = _session()
+    out = {}
+    for page in range(1, 40):
+        p = {"appkey": c["appkey"], "unionId": c.get("unionId", ""),
+             "eliteId": CHANNEL_ID, "pageIndex": page, "pageSize": 20}
+        try:
+            j = s.get(API_JINGFEN, params=p, timeout=25).json()
+            inner = (j.get("jd_union_open_goods_jingfen_query_response") or {}).get("result")
+            x = json.loads(inner) if isinstance(inner, str) else (inner or {})
+            rows = x.get("data") or []
+        except Exception as e:
+            log("频道第%d页异常：%s" % (page, str(e)[:60]))
+            return None
+        if str(x.get("code")) not in ("200", "0"):
+            log("频道第%d页返回异常：%s" % (page, str(x)[:80]))
+            return None
+        for g in rows:
+            gid = str(g.get("itemId") or g.get("skuId") or "")
+            if not gid:
+                continue
+            pi = g.get("priceInfo") or {}
+            ci = g.get("commissionInfo") or {}
+            img = ((g.get("imageInfo") or {}).get("imageList") or [{}])[0].get("url") or ""
+            cl = (g.get("couponInfo") or {}).get("couponList") or []
+            cp = cl[0] if cl else {}
+            mu = str(g.get("materialUrl") or "")
+            if mu and not mu.startswith("http"):
+                mu = "https://" + mu.lstrip("/")
+            end = ""
+            try:
+                et = cp.get("endTime") or cp.get("useEndTime")
+                if et:
+                    end = time.strftime("%Y-%m-%d", time.localtime(float(et) / 1000))
+            except Exception:
+                pass
+            out["ch_" + gid] = {
+                "tao_id": "ch_" + gid,
+                "title": g.get("skuName") or "",
+                "quanhou_jiage": pi.get("lowestCouponPrice") or pi.get("price") or 0,
+                "tkrate3": ci.get("commissionShare") or 0,
+                "volume": g.get("inOrderCount30Days") or g.get("inOrderCount30DaysSku") or 0,
+                "item_url": mu,
+                "coupon_info_money": cp.get("discount") or cp.get("quota") or 0,
+                "coupon_end_time": end,
+                "pict_url": img,
+                "size": pi.get("price") or 0,
+            }
+        if len(rows) < 20:
+            break
+        time.sleep(0.2)
+    if not out:
+        log("频道返回 0 条，视为异常（本轮跳过不清空）")
+        return None
+    log("20032 自营热卖榜频道 %d 条（%d 页）" % (len(out), page))
+    return out
+
+
+def fetch_all(log=_log):
+    """合并两个数据源；任一源失败 → 返回空 dict（整轮跳过，防镜像误删）。"""
+    a = fetch_api_all(log)
+    if not a:
+        return {}
+    b = fetch_channel(log)
+    if b is None:
+        return {}
+    a.update(b)
+    return a
+
+
+def interleave(items, log=_log):
+    """Boss 2026-11-12：每 2 条 <20 元 穿插 2 条 >=20 元；
+    两组内部各自按销量降序，某组取完后剩余另一组按销量降序依次补齐（反之亦然）。"""
+    def sales(x):
+        try:
+            return float(x.get("sales30") or 0)
+        except Exception:
+            return 0.0
+    def price(x):
+        try:
+            return float(x.get("price") or 0)
+        except Exception:
+            return 0.0
+    low = sorted([x for x in items if price(x) < SPLIT_PRICE], key=sales, reverse=True)
+    high = sorted([x for x in items if price(x) >= SPLIT_PRICE], key=sales, reverse=True)
+    out, i, j = [], 0, 0
+    while i < len(low) or j < len(high):
+        for _ in range(2):
+            if i < len(low):
+                out.append(low[i]); i += 1
+        for _ in range(2):
+            if j < len(high):
+                out.append(high[j]); j += 1
+    log("穿插排序：低价组(<20) %d 条 / 高价组(>=20) %d 条" % (len(low), len(high)))
     return out
 
 
@@ -228,6 +334,7 @@ def run_once(log=_log, limit=None, dry=False):
     if limit:
         log("限量模式不落盘（防止冲掉全量数据）")
         return 0
+    out_items = interleave(out_items, log)
     obj = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "total": len(out_items), "items": out_items}
     _save(OUT, obj)
     for g in list(cache):
