@@ -776,6 +776,23 @@ try{
 }catch(e){}
 function _rpSeen(k){ try{ return sessionStorage.getItem('rp_'+k) === '1'; }catch(e){ return false; } }
 function isWeixin(){ return /MicroMessenger/i.test(navigator.userAgent); }
+// 红包总开关（Boss 2026-11-12）：与京东线报红包尾共用 redpack_switch.json；
+// 每次切 tab 实时读，活动到点自动开、过点自动关；读不到按关处理（宁可不弹）。
+function rpSwitchOn(cb){
+  fetch('redpack_switch.json?ts='+Date.now(), {cache:'no-store'})
+    .then(r=>{ if(!r.ok) throw 0; return r.json(); })
+    .then(j=>{
+      let ok = false;
+      if(j && j.manual === true) ok = true;
+      else if(j && j.start && j.end){
+        const p = x => new Date(String(x).replace(' ', 'T') + '+08:00').getTime();
+        const n = Date.now();
+        ok = n >= p(j.start) && n <= p(j.end);
+      }
+      cb(ok);
+    })
+    .catch(()=>cb(false));
+}
 function showRedpack(kind){
   if(_rpSeen(kind)) return;                 // 本会话已弹过，不再弹
   try{ sessionStorage.setItem('rp_'+kind, '1'); }catch(e){}
@@ -868,9 +885,15 @@ document.getElementById('plat').addEventListener('click', e=>{
   document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
   li.classList.add('active'); filter = li.dataset.p;
   stat('tab_'+({'2':'jd','1':'tb','4':'pdd','welfare':'welfare'}[li.dataset.p]||li.dataset.p));
-  // 红包弹层：淘宝类（淘宝/双11福利清单）弹淘宝超红，京东弹京东红包；每会话各弹一次
-  if(filter === '2') showRedpack('jd');
-  else if(filter === '1' || filter === 'welfare' || filter === 'lowprice') showRedpack('tb');
+  // 红包弹层原调用（Boss 2026-11-12 明令注释下线；恢复=在 redpack_switch.json 填活动时间）：
+  // if(filter === '2') showRedpack('jd');
+  // else if(filter === '1' || filter === 'welfare' || filter === 'lowprice') showRedpack('tb');
+  const rpFilter = filter;
+  rpSwitchOn(ok=>{
+    if(!ok) return;
+    if(rpFilter === '2') showRedpack('jd');
+    else if(rpFilter === '1' || rpFilter === 'welfare' || rpFilter === 'lowprice') showRedpack('tb');
+  });
   if(filter === 'welfare'){ renderWelfare(); return; }  // 双11福利清单：独立专区，不拉线报
   if(filter === 'lowprice'){ renderLowprice(); return; }  // 低价好物：独立榜单，不拉线报
   document.getElementById('welfareBar').style.display = 'none';  // 其它状况不显示子标签

@@ -83,12 +83,11 @@ def _tb_redpack_tail():
 REDPACK_MUTE_SEC = 120   # 文案发出后 2 分钟线报静默（Boss 明令）
 _RP_CACHE = {"cal": None}
 REDPACK_EVERY = 1        # 京东每 2 条带一次红包推广（Boss 2026-10-13 明令）
-# Boss 2026-11-12 明令：京东线报的「———— 下单前先领京东红包，更省钱 + 链接」尾巴临时下线，
-# 主群 webhook 与外部群同步都去掉；代码一行不删，年货节/618 等大促随时恢复。
-# 恢复方法（二选一）：①把下面 JD_REDPACK_TAIL_ON 改回 True；②取消 flush 里原逻辑的注释。
-# 恢复预案：红包短链长期不用会过期 → 恢复时把 keyword_state.json 的 redpack_used 置 10
+# Boss 2026-11-12 明令：红包尾 + 网页红包弹层统一由 site/redpack_switch.json 控制，
+# 活动过了关掉、活动开始打开，Boss 只需给开始/结束时间填进 json，无需改代码。
+# 恢复预案：红包短链长期不用会过期 → 开启时把 keyword_state.json 的 redpack_used 置 10
 # （或直接删掉 redpack_link），_get_redpack_link 会立刻重转一条新链，别沿用旧链。
-JD_REDPACK_TAIL_ON = False
+import redpack_switch
 REDPACK_URL = "https://u.jd.com/FrBoSd3"
 # 钩子按线报内容匹配（Boss 2026-10-13 明令：与线报文案相配，嵌入无违和）：
 # 提取线报特征（凑单/首单/plus/赠/券/价格）→ 选对应钩子组，组内按天轮换；无特征走默认池
@@ -772,15 +771,15 @@ def flush(deals, log=print):
         #     tail = "\n" + FOOTER
         # else:
         #     tail = ""
-        # 现行：红包尾受 JD_REDPACK_TAIL_ON 开关控制；关掉后只剩每 5 条一次的站链尾
-        if JD_REDPACK_TAIL_ON and sent_cnt % REDPACK_EVERY == 0:
+        # 现行：红包尾受 redpack_switch.json 总开关控制；关掉后只剩每 5 条一次的站链尾
+        if redpack_switch.on() and sent_cnt % REDPACK_EVERY == 0:
             tail = "\n————\n下单前先领京东红包，更省钱\n" + _get_redpack_link(log=log)
         elif sent_cnt % FOOTER_EVERY == 0:
             tail = "\n" + FOOTER
         else:
             tail = ""
         ok, msg = _send(JD_TAG + t + tail, log)
-        msgs.append(f"京东1条({'红包尾' if JD_REDPACK_TAIL_ON and sent_cnt % REDPACK_EVERY == 0 else ('站尾' if tail else '无尾')})({msg})")
+        msgs.append(f"京东1条({'红包尾' if redpack_switch.on() and sent_cnt % REDPACK_EVERY == 0 else ('站尾' if tail else '无尾')})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))
             ok_any = True
