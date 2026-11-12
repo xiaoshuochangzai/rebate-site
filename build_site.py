@@ -78,7 +78,7 @@ TPL = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>好价线报 · 实时更新</title>
+<title>实时更新</title>
 <meta name="description" content="京东实时优惠线报，每小时自动更新，复制文案即可发单">
 <style>
 :root{--bg:#f4f6fa;--card:#fff;--text:#23262b;--sub:#9aa0a8;--line:#eef0f4;
@@ -391,27 +391,24 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 })();
 </script>
 
-<div class="topbar">
-  <div class="topbar-inner">
-    <a class="logo" href="/">好价线报<small>HAOJIA</small></a>
-  </div>
-</div>
-
 <div class="wrap">
   <div class="screen">
     <div class="screen-item">
+      <div class="title">类目</div>
+      <ul id="cat"><li data-c="lowprice" class="active">低价好物</li><li data-c="xianbao">实时线报</li></ul>
+    </div>
+    <div class="screen-item" id="platItem">
       <div class="title">平台</div>
       <ul id="plat"></ul>
+    </div>
+    <div class="screen-item" id="lpSearchItem">
+      <div class="title">搜索</div>
       <div class="srch">
-        <input id="kw" placeholder="全站搜索：线报+低价好物" autocomplete="off">
+        <input id="kw" placeholder="搜索低价好物商品" autocomplete="off">
         <button class="sbtn" id="btnSearch">搜索</button>
       </div>
     </div>
   </div>
-
-  <div class="wfwrap" id="welfareBar" style="display:none"></div>
-  <!-- 低价好物二级分类（Boss 2026-11-12）：淘宝 / 京东，默认京东 -->
-  <div class="wfwrap" id="lpBar" style="display:none"><span data-s="jd" class="active">京东</span><span data-s="tb">淘宝</span></div>
 
   <div class="rtbar">
     <span class="rt-live"><i class="rt-dot"></i>实时更新</span>
@@ -431,7 +428,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 
 <footer>
   数据每小时自动更新 · 双击卡片（或点顶部红条）复制完整文案<br>
-  好价线报 · __TS__
+  __TS__
 </footer>
 
 <button id="top" title="回到顶部">↑</button>
@@ -445,7 +442,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 <script>
 let DEALS = __DATA__;
 const PAGE_SIZE = 60;
-let filter = 'lowprice', kw = '', shown = 0;  // 默认进站=低价好物（Boss 2026-11-12 明令，PC/移动同一份JS）
+let cat = 'lowprice', filter = 'jd', kw = '', shown = 0;  // Boss 2026-11-12：类目(低价好物|实时线报)+平台(京东|淘宝)，默认低价好物·京东
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function escWithLinks(ln){
   // 转义整行并把行内所有 http(s) 链接转成可点链接（修复行中券链显示灰色不可点）
@@ -602,80 +599,16 @@ function cardHtml(d){
 }
 
 function matched(){
-  const k = kw.toLowerCase();
-  const pool = DEALS.filter(d=>{
-    // Boss 2026-11-12：拼多多只展示券后 ≤9.9 元（存量超价老货前端隐藏，数据不删）
-    if(String(d.platform)==='4' && parseFloat(d._couponAfterPrice||d.price||0) > 9.9) return false;
-    // 顶搜 = 跨全平台（淘宝+京东）；只在无关键词时才按当前分类筛
-    if(!k && filter!=='all' && d.platform!==filter) return false;
-    if(!k) return true;
-    return copyTextOf(d).toLowerCase().indexOf(k)>=0 || (d.cate||'').toLowerCase().indexOf(k)>=0;
-  });
-  if(!k) return pool;
-  // 分级：关键词在卡头（前两行=主打商品名）的是强匹配排前面；
-  // 长文汇总卡（一条塞十几个商品）深处才提到的排后面，避免搜「洗衣液」冒出花生油卡
-  const strong = [], weak = [];
-  pool.forEach(d=>{
-    const head = copyTextOf(d).toLowerCase().split('\\n').slice(0, 2).join('\\n');
-    (head.indexOf(k)>=0 ? strong : weak).push(d);
-  });
-  // Boss 2026-11-12：福利清单 tab 下线，搜索也不再返回福利清单条目（恢复=取消下面注释）
-  // const wfHits = [];
-  // ((WELFARE && WELFARE.items) || []).forEach(it=>{
-  //   if((it.t||'').toLowerCase().indexOf(k)>=0) wfHits.push({_wf:1, it:it});
-  // });
-  // 搜索同时覆盖低价好物两个子分类（淘宝+京东），排在普通线报之后
-  const lpHits = [];
-  [LOWPRICE, LOWPRICE_JD].forEach(ds=>{
-    ((ds && ds.items) || []).forEach(it=>{
-      if((it.t||'').toLowerCase().indexOf(k)>=0) lpHits.push({_lp:1, it:it});
-    });
-  });
-  return strong.concat(weak).concat(lpHits);
+  // Boss 2026-11-12：拼多多从网站删除；实时线报类目只按平台（京东/淘宝）筛选
+  // 平台代号映射：展示代号 jd/tb ↔ 线报数据 platform 2/1
+  const pf = (filter==='jd') ? '2' : (filter==='tb') ? '1' : filter;
+  return DEALS.filter(d=> String(d.platform)===pf);
 }
 let cur = [];
 function render(reset){
   const list = document.getElementById('list');
-  if(kw){
-    // 搜索态（Boss 2026-11-03：关键词搜普通线报+低价好物；福利清单已下线）；专区数据没加载先现拉
-    const go = ()=>{
-      document.getElementById('welfareBar').style.display = 'none';
-      document.getElementById('lpBar').style.display = 'none';
-      document.getElementById('list').classList.remove('wflist');
-      if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
-      document.getElementById('cnt').textContent = cur.length;
-      document.getElementById('total').textContent = DEALS.length;
-      document.getElementById('empty').style.display = cur.length ? 'none' : 'block';
-      const slice = cur.slice(shown, shown+PAGE_SIZE);
-      list.insertAdjacentHTML('beforeend', slice.map(x=> (x&&x._wf) ? wfCard(x.it) : ((x&&x._lp) ? lpCard(x.it) : cardHtml(x))).join(''));
-      shown += slice.length;
-      document.getElementById('more').style.display = shown < cur.length ? 'block' : 'none';
-    };
-    if(!LOWPRICE || !LOWPRICE_JD){
-      let n = 0; const done = ()=>{ if(++n===2) go(); };
-      // Boss 2026-11-12 福利清单下线：不再拉 welfare.json / /api/welfare（恢复时连同上面 wfHits 一起取消注释）
-      // if(WELFARE){ done(); }
-      // else fetch('/api/welfare?ts='+Date.now(), {cache:'no-store'})
-      //   .then(r=>{ if(!r.ok) throw 0; return r.json(); })
-      //   .catch(()=>fetch('welfare.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
-      //   .then(j=>{ WELFARE=j; done(); }).catch(done);
-      if(LOWPRICE){ done(); }
-      else fetch('/api/lowprice?ts='+Date.now(), {cache:'no-store'})
-        .then(r=>{ if(!r.ok) throw 0; return r.json(); })
-        .catch(()=>fetch('lowprice.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
-        .then(j=>{ LOWPRICE=j; done(); }).catch(done);
-      if(LOWPRICE_JD){ done(); }
-      else fetch('/api/lowprice_jd?ts='+Date.now(), {cache:'no-store'})
-        .then(r=>{ if(!r.ok) throw 0; return r.json(); })
-        .catch(()=>fetch('lowprice_jd.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
-        .then(j=>{ LOWPRICE_JD=j; done(); }).catch(done);
-      return;
-    }
-    go(); return;
-  }
-  if(filter === 'welfare'){ renderWelfare(); return; }  // 福利专区由 renderWelfare 接管
-  if(filter === 'lowprice'){ renderLowprice(); return; }  // 低价好物由 renderLowprice 接管
-  document.getElementById('lpBar').style.display = 'none';
+  if(cat === 'lowprice'){ renderLowprice(reset && !kw); return; }  // 搜索走缓存过滤，不强制重拉  // 类目=低价好物（含专用搜索，Boss 2026-11-12）
+  // 类目=实时线报：按平台渲染线报（拼多多已删，Boss 2026-11-12）
   if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
   document.getElementById('cnt').textContent = cur.length;
   document.getElementById('total').textContent = DEALS.length;
@@ -686,58 +619,8 @@ function render(reset){
   document.getElementById('more').style.display = shown < cur.length ? 'block' : 'none';
 }
 
-// ---------- 双11福利清单专区（独立数据 welfare.json；7 个子标签仅点该 tab 时出现） ----------
-let WELFARE = null, wfCat = '';
-function wfCard(it){
-  const price = it.end || it.price || '';
-  const old = (it.price && it.end && it.price > it.end) ? '<s>¥'+esc(it.price)+'</s>' : '';
-  const coupon = it.coupon ? '<span class="wf-coupon">领券省'+esc(it.coupon)+'元</span>' : '';
-  const tpwd = it.tpwd ? '<div class="wf-tpwd" data-tpwd="'+esc(it.tpwd)+'" title="点击复制淘口令">口令 '+esc(it.tpwd)+'</div>' : '';
-  const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">' : '';
-  const link = esc(it.link);
-  return '<div class="wf-row">'
-    + '<a class="wf-thumb" href="'+link+'" target="_blank" rel="noopener">'+img+'</a>'
-    + '<div class="wf-mid"><div class="wf-title">'+esc(it.t)+'</div>'+coupon+tpwd+'</div>'
-    + '<div class="wf-right">'
-    +   '<div class="wf-price"><i>到手价</i>¥'+esc(price)+old+'</div>'
-    +   '<a class="wf-btn" href="'+link+'" target="_blank" rel="noopener">去抢购</a>'
-    + '</div></div>';
-}
-function renderWfList(){
-  const cats = (WELFARE && WELFARE.cats) || [];
-  if(!cats.length) return;
-  let cat = cats.find(c=>c.id===wfCat);
-  if(!cat){ wfCat = cats[0].id; cat = cats[0]; }
-  document.querySelectorAll('#welfareBar span').forEach(x=>
-    x.classList.toggle('active', x.dataset.c === wfCat));
-  const list = document.getElementById('list');
-  list.innerHTML = cat.items.map(wfCard).join('');
-  document.getElementById('cnt').textContent = cat.items.length;
-  document.getElementById('total').textContent = DEALS.length;
-  document.getElementById('more').style.display = 'none';
-  document.getElementById('empty').style.display = 'none';
-}
-function renderWelfare(){
-  document.getElementById('welfareBar').style.display = 'flex';  // 点开才显示子标签
-  document.getElementById('list').classList.add('wflist');       // 行式布局（学聚合页）
-  if(WELFARE){ renderWfList(); return; }
-  document.getElementById('list').innerHTML = '';
-  // 优先 KV 实时通道（监控每 10 分钟写），404/失败回退静态 welfare.json
-  fetch('/api/welfare?ts='+Date.now(), {cache:'no-store'})
-    .then(r=>{ if(!r.ok) throw 0; return r.json(); })
-    .catch(()=>fetch('welfare.json?ts='+Date.now(), {cache:'no-store'})
-      .then(r=>{ if(!r.ok) throw 0; return r.json(); }))
-    .then(j=>{
-      WELFARE = j;
-      document.getElementById('welfareBar').innerHTML = (WELFARE.cats||[]).map(c=>
-        '<span data-c="'+esc(c.id)+'">'+esc(c.name)+'</span>').join('');
-      renderWfList();
-    })
-    .catch(()=>{ document.getElementById('list').innerHTML =
-      '<div class="empty">福利清单加载失败，请点「刷新」重试</div>'; });
-}
 // ---------- 低价好物榜（独立数据 lowprice.json；大淘客 top_sell 榜，价≤30 佣>10%，Boss 2026-11-03 明令） ----------
-let LOWPRICE = null, LOWPRICE_JD = null, lpSub = 'jd';  // 低价好物：淘宝=LOWPRICE / 京东=LOWPRICE_JD（默认京东）
+let LOWPRICE = null, LOWPRICE_JD = null;  // 低价好物：淘宝=LOWPRICE / 京东=LOWPRICE_JD（默认京东，filter 决定）
 function lpCard(it){
   const tpwd = it.tpwd ? '<div class="wf-tpwd" data-tpwd="'+esc(it.tpwd)+'" title="点击复制淘口令">口令 '+esc(it.tpwd)+'</div>' : '';
   const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">' : '';
@@ -753,27 +636,24 @@ function lpCard(it){
     +   '<a class="wf-btn" href="'+link+'" target="_blank" rel="noopener">去抢购</a>'
     + '</div></div>';
 }
-function lpData(){ return (lpSub==='jd') ? LOWPRICE_JD : LOWPRICE; }
-function renderLpBar(){
-  const bar = document.getElementById('lpBar');
-  bar.style.display = 'flex';
-  document.querySelectorAll('#lpBar span').forEach(x=>x.classList.toggle('active', x.dataset.s === lpSub));
-}
+function lpData(){ return (filter==='jd') ? LOWPRICE_JD : LOWPRICE; }
 function renderLpList(){
   const d = lpData();
-  const items = (d && d.items) || [];
+  let items = (d && d.items) || [];
+  if(kw){  // Boss 2026-11-12：搜索框仅针对低价好物
+    const k = kw.toLowerCase();
+    items = items.filter(x=>(x.t||'').toLowerCase().indexOf(k)>=0);
+  }
   document.getElementById('list').innerHTML = items.map(lpCard).join('');
   document.getElementById('cnt').textContent = items.length;
   document.getElementById('total').textContent = DEALS.length;
   document.getElementById('more').style.display = 'none';
   document.getElementById('empty').style.display = items.length ? 'none' : 'block';
 }
-// Boss 2026-11-12：低价好物二级分类（淘宝/京东，默认京东），各自独立的 KV 数据源
+// Boss 2026-11-12：低价好物（类目=lowprice），平台=京东/淘宝（filter），各自独立 KV 数据源
 function renderLowprice(force){
-  document.getElementById('welfareBar').style.display = 'none';
-  renderLpBar();
   document.getElementById('list').classList.add('wflist');
-  const isJd = (lpSub === 'jd');
+  const isJd = (filter === 'jd');
   if(lpData() && !force){ renderLpList(); return; }
   document.getElementById('list').innerHTML = '';
   const api = isJd ? '/api/lowprice_jd' : '/api/lowprice';
@@ -787,12 +667,6 @@ function renderLowprice(force){
     .catch(()=>{ document.getElementById('list').innerHTML =
       '<div class="empty">'+(isJd?'京东':'淘宝')+'低价好物加载失败，请点「刷新」重试</div>'; });
 }
-document.getElementById('lpBar').addEventListener('click', e=>{
-  const sp = e.target.closest('span');
-  if(!sp || sp.dataset.s === lpSub) return;
-  lpSub = sp.dataset.s;
-  renderLowprice(false);
-});
 // ---------- 红包弹层（Boss 2026-10-23 明令：每会话各平台弹一次，关页重开再弹） ----------
 // 京东红包=京享红包（每 10 次使用经精品库通道重转，链接存 keyword_state.json）
 // 淘宝红包=超级红包口令（复制后打开淘宝App自动弹出）
@@ -891,10 +765,7 @@ function showRedpack(kind){
 function closeRedpack(){ document.getElementById('rpMask').classList.remove('show'); }
 document.getElementById('rpMask').onclick = function(e){ if(e.target === this) closeRedpack(); };
 
-document.getElementById('welfareBar').addEventListener('click', e=>{
-  const sp = e.target.closest('span'); if(!sp) return;
-  wfCat = sp.dataset.c; renderWfList();
-});
+// 双11福利清单专区已随类目改版移除（Boss 2026-11-12），恢复时连同 renderWelfare/renderWfList 一起恢复
 
 function toast(msg){
   const t = document.getElementById('toast');
@@ -914,26 +785,34 @@ function fallback(str, tip){
   document.body.removeChild(ta);
 }
 
+// 类目切换（Boss 2026-11-12：低价好物 | 实时线报；切类目重置到京东并重置搜索）
+document.getElementById('cat').addEventListener('click', e=>{
+  const li = e.target.closest('li'); if(!li || li.classList.contains('active')) return;
+  document.querySelectorAll('#cat li').forEach(x=>x.classList.remove('active'));
+  li.classList.add('active'); cat = li.dataset.c;
+  filter = 'jd'; kw = ''; document.getElementById('kw').value = '';
+  buildPlat();
+  document.getElementById('lpSearchItem').style.display = (cat==='lowprice') ? '' : 'none';
+  stat('cat_'+cat);
+  render(true);
+  refreshData();
+});
 document.getElementById('plat').addEventListener('click', e=>{
   const li = e.target.closest('li'); if(!li || li.classList.contains('active')) return;
   document.querySelectorAll('#plat li').forEach(x=>x.classList.remove('active'));
   li.classList.add('active'); filter = li.dataset.p;
-  stat('tab_'+({'2':'jd','1':'tb','4':'pdd','welfare':'welfare'}[li.dataset.p]||li.dataset.p));
+  stat('tab_'+({'2':'jd','1':'tb'}[li.dataset.p]||li.dataset.p));
   // 红包弹层原调用（Boss 2026-11-12 明令注释下线；恢复=在 redpack_switch.json 填活动时间）：
   // if(filter === '2') showRedpack('jd');
-  // else if(filter === '1' || filter === 'welfare' || filter === 'lowprice') showRedpack('tb');
+  // else if(filter === '1') showRedpack('tb');
   const rpFilter = filter;
   rpSwitchOn(ok=>{
     if(!ok) return;
     if(rpFilter === '2') showRedpack('jd');
-    else if(rpFilter === '1' || rpFilter === 'welfare' || rpFilter === 'lowprice') showRedpack('tb');
+    else if(rpFilter === '1') showRedpack('tb');
   });
-  if(filter === 'welfare'){ renderWelfare(); return; }  // 双11福利清单：独立专区，不拉线报
-  if(filter === 'lowprice'){ renderLowprice(); return; }  // 低价好物：独立榜单，不拉线报
-  document.getElementById('welfareBar').style.display = 'none';  // 其它状况不显示子标签
-  document.getElementById('list').classList.remove('wflist');    // 恢复线报网格
   render(true);      // 先用现有数据立即渲染，避免白屏
-  refreshData();     // 切换分类 = 刷新（拉最新数据重绘当前平台）
+  refreshData();     // 切换平台 = 刷新（拉最新数据重绘）
 });
 const kwInput = document.getElementById('kw');
 let timer;
@@ -1037,19 +916,13 @@ topBtn.onclick = ()=>window.scrollTo({top:0,behavior:'smooth'});
 // 平台筛选：京东第一、淘宝第二、拼多多第三，不要「全部」分类
 const PNAME = {'1':'淘宝','2':'京东','3':'飞猪','4':'拼多多'};
 const PORDER = ['2','1','4'];
-function buildTabs(){
-  const seen = {};
-  DEALS.forEach(d=>{ if(d.platform) seen[d.platform]=1; });
-  const arr = PORDER.filter(p=>seen[p]);
-  Object.keys(seen).forEach(p=>{ if(arr.indexOf(p)<0) arr.push(p); });
-  // Boss 2026-11-12 明令：低价好物移到左侧第一位（原压轴），并作为全站默认页
-  arr.unshift('lowprice');
-  // Boss 2026-11-12 明令：双11活动结束，网页端去掉【双11福利清单】tab；恢复=取消下一行注释
-  // arr.push('welfare');  // 双11福利清单：独立专区 tab，固定最后
+function buildPlat(){
+  // Boss 2026-11-12：拼多多从网站删除；类目=低价好物|实时线报，平台均为 京东/淘宝
+  const arr = (cat === 'lowprice') ? [['jd','京东'],['tb','淘宝']] : [['jd','京东'],['tb','淘宝']];
   document.getElementById('plat').innerHTML = arr.map(p=>
-    '<li data-p="'+esc(p)+'"'+(p===String(filter)?' class="active"':'')+'>'+(p==='welfare'?'双11福利清单':(p==='lowprice'?'低价好物':esc(PNAME[p]||p)))+'</li>').join('');
+    '<li data-p="'+p[0]+'"'+(p[0]===filter?' class="active"':'')+'>'+p[1]+'</li>').join('');
 }
-buildTabs();
+buildPlat();
 render(true);
 updateTs(); // 首屏立即用内嵌数据校准「截止」，不等接口返回
 
@@ -1063,9 +936,9 @@ function refreshData(){
       const newTop = String(fresh[0].id||'');
       const changed = (newTop !== oldTop) || fresh.length !== DEALS.length;
       DEALS = fresh;
-      buildTabs();
+      buildPlat();
       render(true);
-      if(filter === 'lowprice') renderLowprice(true);  // 低价好物：刷新时强制重拉当前子分类 KV
+      if(cat === 'lowprice') renderLowprice(true);  // 低价好物：刷新时强制重拉当前子分类 KV
       updateTs();
       return changed;
     })
