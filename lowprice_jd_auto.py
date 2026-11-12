@@ -2,7 +2,7 @@
 """京东低价好物（折京客 API）—— Boss 2026-11-12 拍板执行。
 
 口径：佣金比例>=10% + 券后价<=60元 + 月销量>=1000（api_all 三参数直接筛，本地再校验）。
-每 10 分钟一轮：
+每 3 小时一轮（对齐北京时间 8/11/14/17/20/23 点整，Boss 2026-11-12 明令）：
   1. 分页拉全量（price=0.0-60 & commission_rate_start=10 & sale_num_start=1000）
   2. 镜像：以本轮源站命中 tao_id 集合为准，本地只保留集合内条目 —— 源站消失本站跟着下架，
      不做 7 天清空。源站拉空/失败本轮跳过不清空（防一次抖动误删全站）。
@@ -28,11 +28,12 @@ API_BASE = "http://api.zhetaoke.com:20000/api/"
 API_ALL = API_BASE + "api_all.ashx"
 API_CONV = API_BASE + "open_jing_union_open_promotion_byunionid_get.ashx"
 MAX_PRICE = 60.0
+MIN_PRICE = 3.0         # Boss 2026-11-12 明令：券后价 >=3 元（0.01/1元 那种凑单例剔除）
 MIN_RATE = 10.0
 MIN_SALES = 1000
 PAGE_SIZE = 50
 MAX_PAGES = 60
-LOOP_SEC = 600
+LOOP_SEC = 3 * 3600   # Boss 2026-11-12 明令：每 3 小时全量覆盖一次（原 10 分钟；epoch 对齐→北京 8/11/14/17/20/23 点整）
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
 
 
@@ -101,6 +102,13 @@ def fetch_all(log=_log):
     return out
 
 
+def _variant_key(t):
+    """同款归一键：去掉空白/标点后取标题前 10 字（与轮动池 _variant_key 同口径）。"""
+    import re
+    s = re.sub(r"[\s【】\[\]（）()!！,，。.:：;；\"'“”‘’\-—_/|｜＋+]", "", str(t or ""))
+    return s[:10]
+
+
 def qualifies(it):
     try:
         price = float(it.get("quanhou_jiage") or 0)
@@ -108,7 +116,7 @@ def qualifies(it):
         sales = float(it.get("volume") or 0)
     except Exception:
         return False
-    if not (0 < price <= MAX_PRICE and rate >= MIN_RATE and sales >= MIN_SALES):
+    if not (MIN_PRICE <= price <= MAX_PRICE and rate >= MIN_RATE and sales >= MIN_SALES):
         return False
     # 券已过期的不上站（dadongke 旧券教训）
     end = str(it.get("coupon_end_time") or "").strip()
@@ -175,6 +183,21 @@ def run_once(log=_log, limit=None, dry=False):
     if not target:
         log("本轮无命中商品，跳过（不清空，防误删）")
         return -1
+    # Boss 2026-11-12 明令：同商品不同链接只留一条 —— 按标题前10字分组，
+    # 每组只保留券后价最低的那条（先过滤 <3 元，保证留下的是合格商品）
+    best = {}
+    for gid, it in target.items():
+        k = _variant_key(it.get("title") or it.get("tao_title")) or ("id:" + gid)
+        try:
+            p = float(it.get("quanhou_jiage") or 0)
+        except Exception:
+            p = 0.0
+        cur = best.get(k)
+        if cur is None or p < cur[2]:
+            best[k] = (gid, it, p)
+    n_dup = len(target) - len(best)
+    target = {gid: it for gid, it, _p in best.values()}
+    log("同款归一：合并 %d 条变体，剩 %d 条" % (n_dup, len(target)))
     cache = _load(CACHE, {})
     old_items = {str(x.get("id")): x for x in (_load(OUT, {}).get("items") or [])}
     ordered = sorted(target.items(), key=lambda kv: float(kv[1].get("volume") or 0), reverse=True)
@@ -222,15 +245,18 @@ def run_once(log=_log, limit=None, dry=False):
 
 
 def start_thread(log=_log):
+    """启动时先跑一次（保证重启后数据新鲜），之后对齐到每 3 小时边界整点全量覆盖。"""
     def loop():
         while True:
             try:
                 run_once(log=log)
             except Exception as e:
                 log("本轮异常：%s" % str(e)[:120])
-            time.sleep(LOOP_SEC)
+            now = time.time()
+            nxt = (int(now) // LOOP_SEC + 1) * LOOP_SEC
+            time.sleep(max(60, nxt - now))
     threading.Thread(target=loop, daemon=True, name="lowprice-jd").start()
-    log("镜像同步线程已启动（每 %d 分钟一轮，源站消失即下架）" % (LOOP_SEC // 60))
+    log("镜像同步线程已启动（每 3 小时整点全量覆盖，源站消失即下架）")
 
 
 if __name__ == "__main__":
