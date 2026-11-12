@@ -301,6 +301,20 @@ def _get_redpack_link(log=print):
     return link or REDPACK_JD_URL
 
 
+def _jd_price_ok(deal):
+    """Boss 2026-11-12 明令：企微群的京东线报加价格筛选——文案最高价 ≤200 才推群。
+    取文案中所有「XX元」的最大值（高估口径宁严勿松）；解析不到价格的照常推（多为券类文案）。
+    同步网站无限制：上站不筛，仅推送侧过滤。"""
+    oc = str(deal.get("_originalContext") or deal.get("_siteContext") or "")
+    m = re.findall(r"(\d+(?:\.\d+)?)\s*元", oc)
+    if not m:
+        return True
+    try:
+        return max(float(v) for v in m) <= 200
+    except Exception:
+        return True
+
+
 def _fmt_one(deal):
     """转链后的完整文案，原样输出（链接什么样就什么样，不改写、不加装饰）。
     Boss 2026-09-12 明令：京东优先用 _siteContext（悦拜短链版），企微群里不再出裸 u.jd.com；
@@ -727,6 +741,10 @@ def flush(deals, log=print):
         # Boss 2026-09-11 13:13 明令：京东不限关键词，有新线报就推
         # Boss 2026-09-16 明令：淘宝只推必推榜新品（_bitui 标记），线报不再按关键词推
         if str(d.get("platform")) == "2" or d.get("_bitui"):
+            # Boss 2026-11-12 明令：京东线报价格>200 不推群（同步网站无限制，上站照常）
+            if str(d.get("platform")) == "2" and not _jd_price_ok(d):
+                log("京东线报 %s 价格>200，不推群（网站照常上）" % did)
+                continue
             pending.append(d)
             pending_ids.add(did)
     if not pending:

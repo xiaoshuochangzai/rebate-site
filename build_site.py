@@ -401,13 +401,6 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
       <div class="title">平台</div>
       <ul id="plat"></ul>
     </div>
-    <div class="screen-item" id="lpSearchItem">
-      <div class="title">搜索</div>
-      <div class="srch">
-        <input id="kw" placeholder="搜索低价好物商品" autocomplete="off">
-        <button class="sbtn" id="btnSearch">搜索</button>
-      </div>
-    </div>
   </div>
 
   <div class="rtbar">
@@ -791,9 +784,8 @@ document.getElementById('cat').addEventListener('click', e=>{
   const li = e.target.closest('li'); if(!li || li.classList.contains('active')) return;
   document.querySelectorAll('#cat li').forEach(x=>x.classList.remove('active'));
   li.classList.add('active'); cat = li.dataset.c;
-  filter = 'jd'; kw = ''; document.getElementById('kw').value = '';
+  filter = 'jd'; kw = '';
   buildPlat();
-  document.getElementById('lpSearchItem').style.display = (cat==='lowprice') ? '' : 'none';
   stat('cat_'+cat);
   render(true);
   refreshData();
@@ -815,15 +807,6 @@ document.getElementById('plat').addEventListener('click', e=>{
   render(true);      // 先用现有数据立即渲染，避免白屏
   refreshData();     // 切换平台 = 刷新（拉最新数据重绘）
 });
-const kwInput = document.getElementById('kw');
-let timer;
-kwInput.addEventListener('input', e=>{
-  clearTimeout(timer);
-  timer = setTimeout(()=>{ kw = e.target.value.trim(); render(true); }, 200);
-});
-document.getElementById('btnSearch').onclick = ()=>{ kw = kwInput.value.trim(); render(true); };
-kwInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ kw=kwInput.value.trim(); render(true);} });
-
 const listEl = document.getElementById('list');
 listEl.addEventListener('click', e=>{
   // 卡片链接点击统计（Boss 2026-10-28 明令）：上报后放行默认跳转，不阻断用户
