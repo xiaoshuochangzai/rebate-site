@@ -41,3 +41,7 @@ kv_deals_tmp.json
 welfare_probe.json
 welfare_probe_out.txt
 build_out.txt
+
+# 折京客 appkey（含密钥，绝不外传）
+ztk_config.json
+lp_jd_conv_cache.json

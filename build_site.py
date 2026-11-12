@@ -410,6 +410,8 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
   </div>
 
   <div class="wfwrap" id="welfareBar" style="display:none"></div>
+  <!-- 低价好物二级分类（Boss 2026-11-12）：淘宝 / 京东，默认京东 -->
+  <div class="wfwrap" id="lpBar" style="display:none"><span data-s="jd" class="active">京东</span><span data-s="tb">淘宝</span></div>
 
   <div class="rtbar">
     <span class="rt-live"><i class="rt-dot"></i>实时更新</span>
@@ -443,7 +445,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 <script>
 let DEALS = __DATA__;
 const PAGE_SIZE = 60;
-let filter = '2', kw = '', shown = 0;  // 默认进站显示京东（Boss 2026-11-12 明令：双11福利清单 tab 下线）
+let filter = 'lowprice', kw = '', shown = 0;  // 默认进站=低价好物（Boss 2026-11-12 明令，PC/移动同一份JS）
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function escWithLinks(ln){
   // 转义整行并把行内所有 http(s) 链接转成可点链接（修复行中券链显示灰色不可点）
@@ -622,9 +624,12 @@ function matched(){
   // ((WELFARE && WELFARE.items) || []).forEach(it=>{
   //   if((it.t||'').toLowerCase().indexOf(k)>=0) wfHits.push({_wf:1, it:it});
   // });
+  // 搜索同时覆盖低价好物两个子分类（淘宝+京东），排在普通线报之后
   const lpHits = [];
-  ((LOWPRICE && LOWPRICE.items) || []).forEach(it=>{
-    if((it.t||'').toLowerCase().indexOf(k)>=0) lpHits.push({_lp:1, it:it});
+  [LOWPRICE, LOWPRICE_JD].forEach(ds=>{
+    ((ds && ds.items) || []).forEach(it=>{
+      if((it.t||'').toLowerCase().indexOf(k)>=0) lpHits.push({_lp:1, it:it});
+    });
   });
   return strong.concat(weak).concat(lpHits);
 }
@@ -635,6 +640,8 @@ function render(reset){
     // 搜索态（Boss 2026-11-03：关键词搜普通线报+低价好物；福利清单已下线）；专区数据没加载先现拉
     const go = ()=>{
       document.getElementById('welfareBar').style.display = 'none';
+      document.getElementById('lpBar').style.display = 'none';
+      document.getElementById('list').classList.remove('wflist');
       if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
       document.getElementById('cnt').textContent = cur.length;
       document.getElementById('total').textContent = DEALS.length;
@@ -644,8 +651,8 @@ function render(reset){
       shown += slice.length;
       document.getElementById('more').style.display = shown < cur.length ? 'block' : 'none';
     };
-    if(!LOWPRICE){
-      let n = 0; const done = ()=>{ if(++n===1) go(); };
+    if(!LOWPRICE || !LOWPRICE_JD){
+      let n = 0; const done = ()=>{ if(++n===2) go(); };
       // Boss 2026-11-12 福利清单下线：不再拉 welfare.json / /api/welfare（恢复时连同上面 wfHits 一起取消注释）
       // if(WELFARE){ done(); }
       // else fetch('/api/welfare?ts='+Date.now(), {cache:'no-store'})
@@ -657,12 +664,18 @@ function render(reset){
         .then(r=>{ if(!r.ok) throw 0; return r.json(); })
         .catch(()=>fetch('lowprice.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
         .then(j=>{ LOWPRICE=j; done(); }).catch(done);
+      if(LOWPRICE_JD){ done(); }
+      else fetch('/api/lowprice_jd?ts='+Date.now(), {cache:'no-store'})
+        .then(r=>{ if(!r.ok) throw 0; return r.json(); })
+        .catch(()=>fetch('lowprice_jd.json?ts='+Date.now(), {cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); }))
+        .then(j=>{ LOWPRICE_JD=j; done(); }).catch(done);
       return;
     }
     go(); return;
   }
   if(filter === 'welfare'){ renderWelfare(); return; }  // 福利专区由 renderWelfare 接管
   if(filter === 'lowprice'){ renderLowprice(); return; }  // 低价好物由 renderLowprice 接管
+  document.getElementById('lpBar').style.display = 'none';
   if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
   document.getElementById('cnt').textContent = cur.length;
   document.getElementById('total').textContent = DEALS.length;
@@ -724,7 +737,7 @@ function renderWelfare(){
       '<div class="empty">福利清单加载失败，请点「刷新」重试</div>'; });
 }
 // ---------- 低价好物榜（独立数据 lowprice.json；大淘客 top_sell 榜，价≤30 佣>10%，Boss 2026-11-03 明令） ----------
-let LOWPRICE = null;
+let LOWPRICE = null, LOWPRICE_JD = null, lpSub = 'jd';  // 低价好物：淘宝=LOWPRICE / 京东=LOWPRICE_JD（默认京东）
 function lpCard(it){
   const tpwd = it.tpwd ? '<div class="wf-tpwd" data-tpwd="'+esc(it.tpwd)+'" title="点击复制淘口令">口令 '+esc(it.tpwd)+'</div>' : '';
   const img = it.pic ? '<img src="'+esc(it.pic)+'" referrerpolicy="no-referrer" loading="lazy" alt="">' : '';
@@ -740,28 +753,46 @@ function lpCard(it){
     +   '<a class="wf-btn" href="'+link+'" target="_blank" rel="noopener">去抢购</a>'
     + '</div></div>';
 }
+function lpData(){ return (lpSub==='jd') ? LOWPRICE_JD : LOWPRICE; }
+function renderLpBar(){
+  const bar = document.getElementById('lpBar');
+  bar.style.display = 'flex';
+  document.querySelectorAll('#lpBar span').forEach(x=>x.classList.toggle('active', x.dataset.s === lpSub));
+}
 function renderLpList(){
-  const items = (LOWPRICE && LOWPRICE.items) || [];
+  const d = lpData();
+  const items = (d && d.items) || [];
   document.getElementById('list').innerHTML = items.map(lpCard).join('');
   document.getElementById('cnt').textContent = items.length;
   document.getElementById('total').textContent = DEALS.length;
   document.getElementById('more').style.display = 'none';
   document.getElementById('empty').style.display = items.length ? 'none' : 'block';
 }
-function renderLowprice(){
+// Boss 2026-11-12：低价好物二级分类（淘宝/京东，默认京东），各自独立的 KV 数据源
+function renderLowprice(force){
   document.getElementById('welfareBar').style.display = 'none';
+  renderLpBar();
   document.getElementById('list').classList.add('wflist');
-  if(LOWPRICE){ renderLpList(); return; }
+  const isJd = (lpSub === 'jd');
+  if(lpData() && !force){ renderLpList(); return; }
   document.getElementById('list').innerHTML = '';
-  // 优先 KV 实时通道，404/失败回退静态 lowprice.json
-  fetch('/api/lowprice?ts='+Date.now(), {cache:'no-store'})
+  const api = isJd ? '/api/lowprice_jd' : '/api/lowprice';
+  const fb  = isJd ? 'lowprice_jd.json' : 'lowprice.json';
+  // 优先 KV 实时通道，404/失败回退静态 json
+  fetch(api+'?ts='+Date.now(), {cache:'no-store'})
     .then(r=>{ if(!r.ok) throw 0; return r.json(); })
-    .catch(()=>fetch('lowprice.json?ts='+Date.now(), {cache:'no-store'})
+    .catch(()=>fetch(fb+'?ts='+Date.now(), {cache:'no-store'})
       .then(r=>{ if(!r.ok) throw 0; return r.json(); }))
-    .then(j=>{ LOWPRICE = j; renderLpList(); })
+    .then(j=>{ if(isJd){ LOWPRICE_JD=j; } else { LOWPRICE=j; } renderLpList(); })
     .catch(()=>{ document.getElementById('list').innerHTML =
-      '<div class="empty">低价好物加载失败，请点「刷新」重试</div>'; });
+      '<div class="empty">'+(isJd?'京东':'淘宝')+'低价好物加载失败，请点「刷新」重试</div>'; });
 }
+document.getElementById('lpBar').addEventListener('click', e=>{
+  const sp = e.target.closest('span');
+  if(!sp || sp.dataset.s === lpSub) return;
+  lpSub = sp.dataset.s;
+  renderLowprice(false);
+});
 // ---------- 红包弹层（Boss 2026-10-23 明令：每会话各平台弹一次，关页重开再弹） ----------
 // 京东红包=京享红包（每 10 次使用经精品库通道重转，链接存 keyword_state.json）
 // 淘宝红包=超级红包口令（复制后打开淘宝App自动弹出）
@@ -1005,15 +1036,16 @@ topBtn.onclick = ()=>window.scrollTo({top:0,behavior:'smooth'});
 
 // 平台筛选：京东第一、淘宝第二、拼多多第三，不要「全部」分类
 const PNAME = {'1':'淘宝','2':'京东','3':'飞猪','4':'拼多多'};
-const PORDER = ['2','1','4','lowprice'];
+const PORDER = ['2','1','4'];
 function buildTabs(){
   const seen = {};
   DEALS.forEach(d=>{ if(d.platform) seen[d.platform]=1; });
   const arr = PORDER.filter(p=>seen[p]);
   Object.keys(seen).forEach(p=>{ if(arr.indexOf(p)<0) arr.push(p); });
+  // Boss 2026-11-12 明令：低价好物移到左侧第一位（原压轴），并作为全站默认页
+  arr.unshift('lowprice');
   // Boss 2026-11-12 明令：双11活动结束，网页端去掉【双11福利清单】tab；恢复=取消下一行注释
   // arr.push('welfare');  // 双11福利清单：独立专区 tab，固定最后
-  arr.push('lowprice');  // 低价好物榜：独立专区 tab（Boss 2026-11-03 明令），压轴
   document.getElementById('plat').innerHTML = arr.map(p=>
     '<li data-p="'+esc(p)+'"'+(p===String(filter)?' class="active"':'')+'>'+(p==='welfare'?'双11福利清单':(p==='lowprice'?'低价好物':esc(PNAME[p]||p)))+'</li>').join('');
 }
@@ -1033,6 +1065,7 @@ function refreshData(){
       DEALS = fresh;
       buildTabs();
       render(true);
+      if(filter === 'lowprice') renderLowprice(true);  // 低价好物：刷新时强制重拉当前子分类 KV
       updateTs();
       return changed;
     })

@@ -1418,6 +1418,14 @@ def main():
     threading.Thread(target=_welfare_loop, daemon=True).start()
     print(f"福利清单自动更新线程已启动（每 {WELFARE_EVERY//60} 分钟一轮，含低价好物）")
 
+    # 京东低价好物镜像同步（Boss 2026-11-12 拍板执行）：折京客 API 三条件
+    # 佣金>=10% + 券后<=60 + 月销量>=1000，官方转链出 u.jd.com，源站消失即下架
+    try:
+        import lowprice_jd_auto
+        lowprice_jd_auto.start_thread(log=log)
+    except Exception as e:
+        print(f"京东低价好物线程启动失败：{str(e)[:100]}")
+
     args = sys.argv[1:]
     once = "--once" in args
     do_init = "--init" in args
