@@ -83,6 +83,12 @@ def _tb_redpack_tail():
 REDPACK_MUTE_SEC = 120   # 文案发出后 2 分钟线报静默（Boss 明令）
 _RP_CACHE = {"cal": None}
 REDPACK_EVERY = 1        # 京东每 2 条带一次红包推广（Boss 2026-10-13 明令）
+# Boss 2026-11-12 明令：京东线报的「———— 下单前先领京东红包，更省钱 + 链接」尾巴临时下线，
+# 主群 webhook 与外部群同步都去掉；代码一行不删，年货节/618 等大促随时恢复。
+# 恢复方法（二选一）：①把下面 JD_REDPACK_TAIL_ON 改回 True；②取消 flush 里原逻辑的注释。
+# 恢复预案：红包短链长期不用会过期 → 恢复时把 keyword_state.json 的 redpack_used 置 10
+# （或直接删掉 redpack_link），_get_redpack_link 会立刻重转一条新链，别沿用旧链。
+JD_REDPACK_TAIL_ON = False
 REDPACK_URL = "https://u.jd.com/FrBoSd3"
 # 钩子按线报内容匹配（Boss 2026-10-13 明令：与线报文案相配，嵌入无违和）：
 # 提取线报特征（凑单/首单/plus/赠/券/价格）→ 选对应钩子组，组内按天轮换；无特征走默认池
@@ -759,14 +765,22 @@ def flush(deals, log=print):
         sent_cnt = _bump_sent()  # 站链尾/红包尾都靠这个计数（重启接着数）
         # Boss 2026-10-16 明令：京享红包不再插进消息中间，改成每 2 条在【最后】垫红包尾；
         # 红包尾和每 5 条的旧站链尾都指向 shengqian.cyou，带红包尾的那条就不再叠旧站链尾
-        if sent_cnt % REDPACK_EVERY == 0:
+        # 【2026-11-12 Boss 明令下线，原文注释保留，大促随时恢复】
+        # if sent_cnt % REDPACK_EVERY == 0:
+        #     tail = "\n————\n下单前先领京东红包，更省钱\n" + _get_redpack_link(log=log)
+        # elif sent_cnt % FOOTER_EVERY == 0:
+        #     tail = "\n" + FOOTER
+        # else:
+        #     tail = ""
+        # 现行：红包尾受 JD_REDPACK_TAIL_ON 开关控制；关掉后只剩每 5 条一次的站链尾
+        if JD_REDPACK_TAIL_ON and sent_cnt % REDPACK_EVERY == 0:
             tail = "\n————\n下单前先领京东红包，更省钱\n" + _get_redpack_link(log=log)
         elif sent_cnt % FOOTER_EVERY == 0:
             tail = "\n" + FOOTER
         else:
             tail = ""
         ok, msg = _send(JD_TAG + t + tail, log)
-        msgs.append(f"京东1条({'红包尾' if sent_cnt % REDPACK_EVERY == 0 else ('站尾' if tail else '无尾')})({msg})")
+        msgs.append(f"京东1条({'红包尾' if JD_REDPACK_TAIL_ON and sent_cnt % REDPACK_EVERY == 0 else ('站尾' if tail else '无尾')})({msg})")
         if ok:
             sent_ids.append(str(d.get("id")))
             ok_any = True
