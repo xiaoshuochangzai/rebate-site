@@ -42,6 +42,15 @@ MAX_PAGES = 60
 LOOP_SEC = 3 * 3600   # Boss 2026-11-12 明令：每 3 小时全量覆盖一次（原 10 分钟；epoch 对齐→北京 8/11/14/17/20/23 点整）
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
 
+# ---- 京东联盟 20033（超级补贴/热卖清单）活动：券商品先行（Boss 2026-11-12 拍板）----
+# 转链死结（数字id/裸链/好单库代理/官方API权限）全部被「单品自带 coupon.m.jd.com 券链接
+# → 折京客零成本转 u.jd.com」绕过。数据源 = 20033 活动页底层 unionSearchRecommend 接口，
+# 经 9222 专用浏览器拦截页面自身请求抓取（注入直调会被京东 403 反爬拦截）。
+JD20033_URL = "https://jingfen.jd.com/item?u_act_p=union-activity&union_page_id=20033"
+CDP_PORT = 9222
+IMG_BASE = "https://img14.360buyimg.com/"   # 20033 的 imageUrl 是相对 jfs 路径，需补域名
+MAX_20033_SCROLL = 20                        # 活动约 17 页（326 商品），多留余量
+
 
 def _log(msg):
     print("[%s] 京东低价好物：%s" % (time.strftime("%H:%M:%S"), msg))
@@ -171,6 +180,193 @@ def fetch_channel(log=_log):
     return out
 
 
+def parse_20033_response(j):
+    """从 unionSearchRecommend 响应 JSON 抽出 goodsSynopsisList（兼容多层嵌套）。"""
+    if not isinstance(j, dict):
+        return []
+    lst = (j.get("result") or {}).get("goodsSynopsisList")
+    if lst:
+        return lst
+    def _find(o, key="goodsSynopsisList"):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == key and isinstance(v, list):
+                    return v
+                r = _find(v, key)
+                if r:
+                    return r
+        elif isinstance(o, list):
+            for v in o:
+                r = _find(v, key)
+                if r:
+                    return r
+        return None
+    return _find(j) or []
+
+
+def _norm_coupon(url):
+    url = (url or "").strip()
+    if url.startswith("//"):
+        url = "https:" + url
+    return url
+
+
+def _best_coupon(it):
+    """抽最佳可转链券：优先 unionCouponList（与 purchasePrice 严格一致），
+    否则在 otherCouponList 中选折扣最大且合理（discount>=1 且 < 门槛价）的券做最佳估计。
+    返回 (couponUrl, discount, price_after, end_time) 或 None（破价品/无可用券）。"""
+    ppi = it.get("purchasePriceInfo") or {}
+    uc = (ppi.get("unionCouponList") or []) if isinstance(ppi, dict) else []
+    oc = it.get("otherCouponList") or []
+    threshold = float(ppi.get("thresholdPrice") or it.get("wlPrice") or 0)
+    promo = float(ppi.get("promotionBenefit") or 0)
+    purchase_price = ppi.get("purchasePrice")
+    if uc:
+        c0 = uc[0]
+        url = _norm_coupon(c0.get("couponUrl"))
+        disc = float(ppi.get("couponBenefit") or 0)
+        price = float(purchase_price) if purchase_price is not None else (threshold - disc)
+        end = str(c0.get("endTime") or "").strip()
+        return (url, disc, price, end)
+    # 无 union 券 → 在 other 券里挑最大且合理的（破价/无券则 None）
+    best = None
+    for c in oc:
+        try:
+            d = float(c.get("discount") or 0)
+        except Exception:
+            d = 0
+        if d < 1 or (threshold and d >= threshold):
+            continue
+        end = str(c.get("endTime") or c.get("useEndTime") or "").strip()
+        cand = (_norm_coupon(c.get("couponUrl")), d, max(0.0, threshold - d - promo), end)
+        if best is None or d > best[1]:
+            best = cand
+    return best
+
+
+def build_20033_items(raw_list, log=_log):
+    """把 unionSearchRecommend 原始商品映射成与 api_all 同形 dict。
+    破价品（无可用券）跳过；tao_id 用 jd2_ 前缀避免与 api_all 的 tao_id 碰撞。"""
+    out, n_skip = {}, 0
+    for it in (raw_list or []):
+        sku = str(it.get("skuId") or "").strip()
+        if not sku:
+            continue
+        coupon = _best_coupon(it)
+        if not coupon or not coupon[0]:
+            n_skip += 1
+            continue
+        url, disc, price, end = coupon
+        img = str(it.get("imageUrl") or "").strip()
+        if img and not img.startswith("http"):
+            img = IMG_BASE + img
+        gid = "jd2_" + sku
+        out[gid] = {
+            "tao_id": gid,
+            "title": str(it.get("skuName") or "").strip(),
+            "quanhou_jiage": price,
+            "tkrate3": 0,            # 20033 联盟佣金比例未知，展示 0 不误导；实际佣金由转链后链接携带
+            "volume": it.get("inOrderCount30Days") or 0,
+            "item_url": url,         # 券链接（完整 URL，折京客不拦）
+            "coupon_info_money": disc,
+            "coupon_end_time": end,
+            "pict_url": img,
+            "size": float((it.get("purchasePriceInfo") or {}).get("thresholdPrice") or it.get("wlPrice") or 0),
+            "_src": "20033",
+        }
+    log("20033 建项：可用券商品 %d 条，破价/无券跳过 %d 条" % (len(out), n_skip))
+    return out
+
+
+def fetch_20033_cdp(log=_log):
+    """连 9222 浏览器里的 20033 活动页 tab，Network 拦截其自身 unionSearchRecommend
+    分页请求（翻到底触发），抓取全量商品。无浏览器/无 tab/异常 → 优雅返回 []，
+    由全站库兜底，绝不阻断主流程。"""
+    try:
+        import websocket
+        import urllib.request as _ur
+        OP = _ur.build_opener(_ur.ProxyHandler({}))
+        try:
+            tabs = json.loads(OP.open("http://127.0.0.1:%d/json/list" % CDP_PORT, timeout=5).read())
+        except Exception as e:
+            log("20033：9222 浏览器未响应（%s），跳过，仅全站库兜底" % str(e)[:40])
+            return []
+        tab = next((t for t in tabs if "union_page_id=20033" in (t.get("url") or "")), None)
+        if not tab:
+            jt = next((t for t in tabs if t.get("type") == "page" and "jd.com" in (t.get("url") or "")), None)
+            if not jt:
+                log("20033：无可用 jd 标签，跳过")
+                return []
+            tab = jt
+        ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+        _id = [0]
+        def send(m, p=None):
+            _id[0] += 1
+            ws.send(json.dumps({"id": _id[0], "method": m, "params": p or {}}))
+            return _id[0]
+        def recv(i, timeout=30):
+            ws.settimeout(timeout)
+            while True:
+                m = json.loads(ws.recv())
+                if m.get("id") == i:
+                    return m
+                if m.get("id", 0) > i:
+                    return {}
+        send("Network.enable"); send("Page.enable")
+        # 重载到 20033 页（清掉已有滚动态，保证从头抓）
+        send("Page.navigate", {"url": JD20033_URL})
+        time.sleep(4)
+        reqs, bodies, no_new = {}, {}, 0
+        for _ in range(MAX_20033_SCROLL):
+            send("Runtime.evaluate", {"expression":
+                 "window.scrollTo(0,(document.body&&document.body.scrollHeight)||"
+                 "(document.documentElement&&document.documentElement.scrollHeight)||0);",
+                 "returnByValue": True})
+            deadline = time.time() + 2.5
+            got = 0
+            while time.time() < deadline:
+                try:
+                    ws.settimeout(max(0.3, deadline - time.time()))
+                    m = json.loads(ws.recv())
+                except Exception:
+                    break
+                meth = m.get("method", ""); p = m.get("params", {})
+                if meth == "Network.responseReceived":
+                    r = p.get("response", {}); u = r.get("url", "")
+                    if "unionSearchRecommend" in u and r.get("status") == 200:
+                        reqs[p["requestId"]] = u
+                elif meth == "Network.loadingFinished":
+                    rid = p.get("requestId")
+                    if rid in reqs and rid not in bodies:
+                        i2 = send("Network.getResponseBody", {"requestId": rid})
+                        rb = recv(i2, 12)
+                        b = (rb.get("result") or {})
+                        body = b.get("body", "")
+                        if b.get("base64Encoded"):
+                            import base64
+                            body = base64.b64decode(body).decode("utf-8", "ignore")
+                        bodies[rid] = body
+                        try:
+                            got += len(parse_20033_response(json.loads(body)))
+                        except Exception:
+                            pass
+            no_new = 0 if got else no_new + 1
+            if no_new >= 3:
+                break
+        all_items = []
+        for rid, body in bodies.items():
+            try:
+                all_items.extend(parse_20033_response(json.loads(body)))
+            except Exception:
+                pass
+        ws.close()
+        log("20033 CDP 抓取：%d 个分页响应 / %d 商品（去重前）" % (len(bodies), len(all_items)))
+        return all_items
+    except Exception as e:
+        log("20033 CDP 异常（跳过，仅全站库兜底）：%s" % str(e)[:80])
+        return []
+
+
 def fetch_all(log=_log):
     """Boss 2026-11-12 15:14 明令：撤三榜单组合，只用全站领券商品库。
     三条件一次筛：券后 3~60 元 + 佣金≥10% + 月销量≥1000（参数直接下推）。"""
@@ -191,8 +387,11 @@ def interleave(items, log=_log):
             return float(x.get("price") or 0)
         except Exception:
             return 0.0
-    low = sorted([x for x in items if price(x) < SPLIT_PRICE], key=sales, reverse=True)
-    high = sorted([x for x in items if price(x) >= SPLIT_PRICE], key=sales, reverse=True)
+    # 组内 20033（活动精选）优先排前，再按销量降序 —— 落实「20033主+全站库兜底」
+    def _key(x):
+        return (0 if x.get("_src") == "20033" else 1, -sales(x))
+    low = sorted([x for x in items if price(x) < SPLIT_PRICE], key=_key)
+    high = sorted([x for x in items if price(x) >= SPLIT_PRICE], key=_key)
     out, i, j = [], 0, 0
     while i < len(low) or j < len(high):
         for _ in range(2):
@@ -215,12 +414,17 @@ def _variant_key(t):
 def qualifies(it):
     try:
         price = float(it.get("quanhou_jiage") or 0)
-        rate = float(it.get("tkrate3") or 0)
-        sales = float(it.get("volume") or 0)
     except Exception:
         return False
-    if not (MIN_PRICE <= price <= MAX_PRICE and rate >= MIN_RATE and sales >= MIN_SALES):
-        return False
+    # 20033 券商品：Boss 明令只卡价 3~60 + 券未过期，不卡佣金/销量（活动精选本就优质）
+    if it.get("_src") == "20033":
+        if not (MIN_PRICE <= price <= MAX_PRICE):
+            return False
+    else:
+        rate = float(it.get("tkrate3") or 0)
+        sales = float(it.get("volume") or 0)
+        if not (MIN_PRICE <= price <= MAX_PRICE and rate >= MIN_RATE and sales >= MIN_SALES):
+            return False
     # 券已过期的不上站（dadongke 旧券教训）
     end = str(it.get("coupon_end_time") or "").strip()
     if end:
@@ -277,17 +481,24 @@ def to_item(it, link):
     }
 
 
-def run_once(log=_log, limit=None, dry=False):
+def run_once(log=_log, limit=None, dry=False, src20033=None):
     raw = fetch_all(log)
     if not raw:
         log("源站返回空/失败，本轮跳过（不清空，防误删）")
         return -1
-    target = {g: it for g, it in raw.items() if qualifies(it)}
+    # 20033 券商品（活动精选，主推）；失败/无浏览器则优雅跳过，由全站库兜底
+    if src20033 is None:
+        src20033 = fetch_20033_cdp(log)
+    raw20033 = build_20033_items(src20033, log) if src20033 else {}
+    # 合并：jd2_ 主键不撞全站库 tao_id；写入时 20033 覆盖同名键（同款去重再裁决）
+    merged = dict(raw)
+    merged.update(raw20033)
+    target = {g: it for g, it in merged.items() if qualifies(it)}
     if not target:
         log("本轮无命中商品，跳过（不清空，防误删）")
         return -1
     # Boss 2026-11-12 明令：同商品不同链接只留一条 —— 按标题前10字分组，
-    # 每组只保留券后价最低的那条（先过滤 <3 元，保证留下的是合格商品）
+    # 每组只保留券后价最低的那条；价格相同则 20033（活动精选）优先。
     best = {}
     for gid, it in target.items():
         k = _variant_key(it.get("title") or it.get("tao_title")) or ("id:" + gid)
@@ -296,11 +507,11 @@ def run_once(log=_log, limit=None, dry=False):
         except Exception:
             p = 0.0
         cur = best.get(k)
-        if cur is None or p < cur[2]:
+        if cur is None or p < cur[2] - 1e-9 or (abs(p - cur[2]) < 1e-9 and it.get("_src") == "20033"):
             best[k] = (gid, it, p)
     n_dup = len(target) - len(best)
     target = {gid: it for gid, it, _p in best.values()}
-    log("同款归一：合并 %d 条变体，剩 %d 条" % (n_dup, len(target)))
+    log("同款归一：合并 %d 条变体（含 20033 %d 条），剩 %d 条" % (n_dup, len(raw20033), len(target)))
     cache = _load(CACHE, {})
     old_items = {str(x.get("id")): x for x in (_load(OUT, {}).get("items") or [])}
     ordered = sorted(target.items(), key=lambda kv: float(kv[1].get("volume") or 0), reverse=True)
@@ -370,4 +581,18 @@ if __name__ == "__main__":
             lim = int(sys.argv[sys.argv.index("--limit") + 1])
         except Exception:
             lim = 3
-    run_once(limit=lim, dry="--dry" in sys.argv)
+    src20033 = None
+    if "--offline20033" in sys.argv:
+        import glob as _gl
+        bodies_dir = os.path.join(BASE_DIR, "jd20033_bodies")
+        raws = []
+        for fn in sorted(_gl.glob(os.path.join(bodies_dir, "resp*.json"))):
+            try:
+                txt = open(fn, encoding="utf-8").read().split("\n\n", 1)
+                j = json.loads(txt[1] if len(txt) > 1 else txt[0])
+                raws.extend(parse_20033_response(j))
+            except Exception:
+                pass
+        src20033 = raws
+        print("[离线] 载入 20033 抓取体 %d 条（来自 jd20033_bodies）" % len(raws))
+    run_once(limit=lim, dry="--dry" in sys.argv, src20033=src20033)
