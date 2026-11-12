@@ -609,6 +609,7 @@ function render(reset){
   const list = document.getElementById('list');
   if(cat === 'lowprice'){ renderLowprice(reset && !kw); return; }  // 搜索走缓存过滤，不强制重拉  // 类目=低价好物（含专用搜索，Boss 2026-11-12）
   // 类目=实时线报：按平台渲染线报（拼多多已删，Boss 2026-11-12）
+  document.getElementById('list').classList.remove('wflist');  // 恢复线报网格样式（低价好物是行式）
   if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
   document.getElementById('cnt').textContent = cur.length;
   document.getElementById('total').textContent = DEALS.length;

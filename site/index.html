@@ -338,7 +338,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
   <div class="rtbar">
     <span class="rt-live"><i class="rt-dot"></i>实时更新</span>
     <span class="rt-sep"></span>
-    <span class="rt-txt">截止 <b class="rt-num">16:13</b></span>
+    <span class="rt-txt">截止 <b class="rt-num">16:19</b></span>
     <span class="rt-sep"></span>
     <span class="rt-txt">今日更新 <b class="rt-num" id="cnt">0</b> 条</span>
     <span class="rt-sep"></span>
@@ -353,7 +353,7 @@ white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.18);animation:hbPulse 1.5s 
 
 <footer>
   数据每小时自动更新 · 双击卡片（或点顶部红条）复制完整文案<br>
-  2026-11-12 16:13:11
+  2026-11-12 16:19:48
 </footer>
 
 <button id="top" title="回到顶部">↑</button>
@@ -534,6 +534,7 @@ function render(reset){
   const list = document.getElementById('list');
   if(cat === 'lowprice'){ renderLowprice(reset && !kw); return; }  // 搜索走缓存过滤，不强制重拉  // 类目=低价好物（含专用搜索，Boss 2026-11-12）
   // 类目=实时线报：按平台渲染线报（拼多多已删，Boss 2026-11-12）
+  document.getElementById('list').classList.remove('wflist');  // 恢复线报网格样式（低价好物是行式）
   if(reset){ cur = matched(); shown = 0; list.innerHTML=''; }
   document.getElementById('cnt').textContent = cur.length;
   document.getElementById('total').textContent = DEALS.length;
