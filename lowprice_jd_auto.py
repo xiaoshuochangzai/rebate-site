@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """京东低价好物（折京客 API）—— Boss 2026-11-12 拍板执行。
 
-口径：佣金比例>=10% + 券后价 3~60 元 + 月销量>=1000（api_all 三参数直接筛，本地再校验）；
+口径：券后价 3~60 元 + 佣金比例>=10% + 月销量>=1000（qualifies 统一把关，本地再校验）；
       同款不同链接只留一条（标题前10字分组留最低价）。
-数据源：①全站领券商品库 api_all；②20032 页面「自营热卖榜」= 折京客 eliteId=41 频道。
+数据源（三个官方榜单，全站裸库已去掉）：自营热卖榜(eliteId=41)、超高佣金(commission_rate_start=50)、超高销量(sale_num_start=10000)。
 展示排序：每 2 条 <20 元 穿插 2 条 >=20 元，组内按销量降序，剩余组降序补齐。
 每 3 小时一轮（对齐北京时间 8/11/14/17/20/23 点整，Boss 2026-11-12 明令）：
   1. 分页拉全量（price=0.0-60 & commission_rate_start=10 & sale_num_start=1000）
@@ -75,15 +75,17 @@ def _save(path, obj):
     os.replace(tmp, path)
 
 
-def fetch_api_all(log=_log):
-    """数据源①：全站领券商品库，分页拉三条件全量；失败返回空 dict。"""
+def fetch_api_all(extra, label, log=_log):
+    """数据源①②：api_all 全站库 + 参数组合（官方榜单即不同参数：超高佣金/超高销量）。
+    失败返回空 dict。"""
     c = _conf()
     s = _session()
     out = {}
+    base = {"appkey": c["appkey"], "page": 0, "page_size": PAGE_SIZE,
+            "sort": "sale_num_desc", "price": "3.0-60"}
+    base.update(extra)
     for page in range(1, MAX_PAGES + 1):
-        p = {"appkey": c["appkey"], "page": page, "page_size": PAGE_SIZE,
-             "sort": "sale_num_desc", "price": "0.0-60",
-             "commission_rate_start": 10, "sale_num_start": 1000}
+        p = dict(base); p["page"] = page
         try:
             r = s.get(API_ALL, params=p, timeout=25)
             j = r.json()
@@ -104,7 +106,7 @@ def fetch_api_all(log=_log):
         if len(lst) < PAGE_SIZE:
             break
         time.sleep(0.2)
-    log("源站三条件全量 %d 条（%d 页）" % (len(out), page))
+    log("%s：%d 条（%d 页）" % (label, len(out), page))
     return out
 
 
@@ -170,15 +172,10 @@ def fetch_channel(log=_log):
 
 
 def fetch_all(log=_log):
-    """合并两个数据源；任一源失败 → 返回空 dict（整轮跳过，防镜像误删）。"""
-    a = fetch_api_all(log)
-    if not a:
-        return {}
-    b = fetch_channel(log)
-    if b is None:
-        return {}
-    a.update(b)
-    return a
+    """Boss 2026-11-12 15:14 明令：撤三榜单组合，只用全站领券商品库。
+    三条件一次筛：券后 3~60 元 + 佣金≥10% + 月销量≥1000（参数直接下推）。"""
+    return fetch_api_all({"price": "3.0-60", "commission_rate_start": 10,
+                          "sale_num_start": 1000}, "全站领券商品库", log)
 
 
 def interleave(items, log=_log):
