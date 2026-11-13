@@ -64,6 +64,13 @@ def launch(headless=False):
         "--window-size=1400,900",
         "--window-position=60,60",
         "--remote-allow-origins=*",  # Chrome 111+ 必须，否则 CDP 握手 403
+        # 防节流：让后台/遮挡/最小化窗口照常渲染 —— 20033 活动页懒加载依赖真实视口，
+        # 否则 Chrome 把页面冻住、滚到底不触发"加载更多"。Windows 上 CalculateNativeWinOcclusion
+        # 是 OS 级遮挡检测，必须一并关掉（Boss 2026-11-13 拍板）。
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-features=CalculateNativeWinOcclusion",
     ]
     if headless:
         args.append("--headless=new")

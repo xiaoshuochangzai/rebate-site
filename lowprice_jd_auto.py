@@ -278,10 +278,34 @@ def build_20033_items(raw_list, log=_log):
     return out
 
 
+def load_offline_20033(log=_log):
+    """离线种子：读 jd20033_bodies/ 下已抓回的 unionSearchRecommend 响应体，
+    抽出可用商品。实时通道（登录态有效时）能拿更多/更新，但离线种子保证
+    即使 9222 浏览器没登录 jingfen 会话、被登录墙拦截，20033 精选也永远有货。"""
+    import glob as _gl
+    raws = []
+    d = os.path.join(BASE_DIR, "jd20033_bodies")
+    for fn in sorted(_gl.glob(os.path.join(d, "resp*.json"))):
+        try:
+            txt = open(fn, encoding="utf-8").read().split("\n\n", 1)
+            j = json.loads(txt[1] if len(txt) > 1 else txt[0])
+            raws.extend(parse_20033_response(j))
+        except Exception:
+            pass
+    log("20033 离线种子：%d 条（jd20033_bodies）" % len(raws))
+    return raws
+
+
 def fetch_20033_cdp(log=_log):
     """连 9222 浏览器里的 20033 活动页 tab，Network 拦截其自身 unionSearchRecommend
-    分页请求（翻到底触发），抓取全量商品。无浏览器/无 tab/异常 → 优雅返回 []，
-    由全站库兜底，绝不阻断主流程。"""
+    分页请求（滚动到底触发），抓取商品。
+
+    关键前置：jingfen.jd.com 活动页要求移动端 JD 登录态，专用 .jd-bot-profile
+    只有 union.jd.com 会话 → 未登录时页面重定向到 plogin.m.jd.com 登录墙，
+    此时直接跳过（返回 []），由离线种子兜底，绝不卡主流程。
+    已登录时：真实滚轮触发 Taro scroll-view 的 onScrollToLower（加载守卫需
+    每次等待释放，故每轮滚完等 2.5s），逐步翻完所有页。
+    无浏览器/无 tab/异常 → 优雅返回 []，由全站库兜底。"""
     try:
         import websocket
         import urllib.request as _ur
@@ -289,7 +313,7 @@ def fetch_20033_cdp(log=_log):
         try:
             tabs = json.loads(OP.open("http://127.0.0.1:%d/json/list" % CDP_PORT, timeout=5).read())
         except Exception as e:
-            log("20033：9222 浏览器未响应（%s），跳过，仅全站库兜底" % str(e)[:40])
+            log("20033：9222 浏览器未响应（%s），跳过，仅离线种子兜底" % str(e)[:40])
             return []
         tab = next((t for t in tabs if "union_page_id=20033" in (t.get("url") or "")), None)
         if not tab:
@@ -312,17 +336,27 @@ def fetch_20033_cdp(log=_log):
                     return m
                 if m.get("id", 0) > i:
                     return {}
-        send("Network.enable"); send("Page.enable")
-        # 重载到 20033 页（清掉已有滚动态，保证从头抓）
+        send("Network.enable"); send("Page.enable"); send("Input.enable")
+        # 重载到 20033 页
         send("Page.navigate", {"url": JD20033_URL})
-        time.sleep(4)
+        time.sleep(5)
+        # 登录墙检测：未登录会 302 到 plogin.m.jd.com
+        chk = send("Runtime.evaluate", {"expression": "location.href", "returnByValue": True})
+        hr = recv(chk, 10)
+        cur_url = (hr.get("result", {}).get("result", {}) or {}).get("value", "") or ""
+        if "plogin.m.jd.com" in cur_url or "login" in cur_url:
+            log("20033：检测到登录墙（jingfen 会话缺失），跳过实时抓取，回退离线种子")
+            ws.close()
+            return []
         reqs, bodies, no_new = {}, {}, 0
+        # 先来一脚滚轮触发首屏加载
+        send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": 700, "y": 450,
+                                          "deltaX": 0, "deltaY": 2000, "modifiers": 0})
+        time.sleep(2)
         for _ in range(MAX_20033_SCROLL):
-            send("Runtime.evaluate", {"expression":
-                 "window.scrollTo(0,(document.body&&document.body.scrollHeight)||"
-                 "(document.documentElement&&document.documentElement.scrollHeight)||0);",
-                 "returnByValue": True})
-            deadline = time.time() + 2.5
+            send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": 700, "y": 450,
+                                              "deltaX": 0, "deltaY": 4000, "modifiers": 0})
+            deadline = time.time() + 2.5   # 等加载守卫释放，避免 onScrollToLower 被吞
             got = 0
             while time.time() < deadline:
                 try:
@@ -351,7 +385,7 @@ def fetch_20033_cdp(log=_log):
                         except Exception:
                             pass
             no_new = 0 if got else no_new + 1
-            if no_new >= 3:
+            if no_new >= 4:
                 break
         all_items = []
         for rid, body in bodies.items():
@@ -360,10 +394,10 @@ def fetch_20033_cdp(log=_log):
             except Exception:
                 pass
         ws.close()
-        log("20033 CDP 抓取：%d 个分页响应 / %d 商品（去重前）" % (len(bodies), len(all_items)))
+        log("20033 CDP 实时抓取：%d 个分页响应 / %d 商品（去重前）" % (len(bodies), len(all_items)))
         return all_items
     except Exception as e:
-        log("20033 CDP 异常（跳过，仅全站库兜底）：%s" % str(e)[:80])
+        log("20033 CDP 异常（跳过，仅离线种子兜底）：%s" % str(e)[:80])
         return []
 
 
@@ -486,9 +520,13 @@ def run_once(log=_log, limit=None, dry=False, src20033=None):
     if not raw:
         log("源站返回空/失败，本轮跳过（不清空，防误删）")
         return -1
-    # 20033 券商品（活动精选，主推）；失败/无浏览器则优雅跳过，由全站库兜底
+    # 20033 券商品（活动精选，主推）。
+    # 实时通道（浏览器已登录 jingfen 会话）拿全量最新；离线种子（jd20033_bodies）
+    # 保证即使登录墙拦截/无浏览器也永远有货。两者按 skuId 合并，实时覆盖离线。
     if src20033 is None:
-        src20033 = fetch_20033_cdp(log)
+        live = fetch_20033_cdp(log)
+        offline = load_offline_20033(log)
+        src20033 = offline + (live or [])
     raw20033 = build_20033_items(src20033, log) if src20033 else {}
     # 合并：jd2_ 主键不撞全站库 tao_id；写入时 20033 覆盖同名键（同款去重再裁决）
     merged = dict(raw)
