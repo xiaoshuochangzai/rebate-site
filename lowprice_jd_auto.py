@@ -19,6 +19,7 @@
 """
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -408,9 +409,11 @@ def fetch_all(log=_log):
                           "sale_num_start": 1000}, "全站领券商品库", log)
 
 
-def interleave(items, log=_log):
-    """Boss 2026-11-12：每 2 条 <20 元 穿插 2 条 >=20 元；
-    两组内部各自按销量降序，某组取完后剩余另一组按销量降序依次补齐（反之亦然）。"""
+def interleave(items, log=_log, shuffle=True):
+    """Boss 2026-11-12：每 2 条 <20 元 穿插 2 条 >=20 元，某组取完后另一组依次补齐。
+    Boss 2026-11-16：每组内部改为「按当日日期做种子洗牌」——同一天顺序稳定、
+    跨天自动换序，解决「天天进来都一样」。20033 活动精选与普通商品一起混洗，不置顶。
+    shuffle=False 时退回销量降序（保留给需要固定序的场景/回归测试）。"""
     def sales(x):
         try:
             return float(x.get("sales30") or 0)
@@ -421,11 +424,19 @@ def interleave(items, log=_log):
             return float(x.get("price") or 0)
         except Exception:
             return 0.0
-    # 组内 20033（活动精选）优先排前，再按销量降序 —— 落实「20033主+全站库兜底」
-    def _key(x):
-        return (0 if x.get("_src") == "20033" else 1, -sales(x))
-    low = sorted([x for x in items if price(x) < SPLIT_PRICE], key=_key)
-    high = sorted([x for x in items if price(x) >= SPLIT_PRICE], key=_key)
+    low = [x for x in items if price(x) < SPLIT_PRICE]
+    high = [x for x in items if price(x) >= SPLIT_PRICE]
+    if shuffle:
+        seed = time.strftime("%Y-%m-%d")   # 当日自然日（北京时间）；同一天稳定，跨天换新序
+        rnd = random.Random(seed)
+        rnd.shuffle(low)
+        rnd.shuffle(high)
+        tag = "当日洗牌(%s)" % seed
+    else:
+        key = lambda x: -sales(x)
+        low.sort(key=key)
+        high.sort(key=key)
+        tag = "销量降序"
     out, i, j = [], 0, 0
     while i < len(low) or j < len(high):
         for _ in range(2):
@@ -434,7 +445,7 @@ def interleave(items, log=_log):
         for _ in range(2):
             if j < len(high):
                 out.append(high[j]); j += 1
-    log("穿插排序：低价组(<20) %d 条 / 高价组(>=20) %d 条" % (len(low), len(high)))
+    log("穿插排序[%s]：低价组(<20) %d 条 / 高价组(>=20) %d 条" % (tag, len(low), len(high)))
     return out
 
 

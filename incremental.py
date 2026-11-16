@@ -997,6 +997,149 @@ def mc_refill_tick(log=print):
     log("销量周期：三队列本周期均已发完/全在退避，等下个 3 小时周期重排")
 
 
+# ---- 京东低价好物轮动发群（Boss 2026-11-16 明令）----
+# 与淘宝低价好物对称，但京东商品已转好链（lowprice_jd.json 里现成 u.jd.com），
+# 无需后台转链，直接从成品库登记进独立轮动池，每分钟 1 条主群+外部群同节奏发。
+# 口径：标签【京东低价】、链接直接用 u.jd.com、站尾每 2 条一次、守夜闸+红包静默。
+JD_LP_FILE = os.path.join(BASE_DIR, "site", "lowprice_jd.json")   # 数据源：现成成品库
+JD_LP_POOL_FILE = os.path.join(BASE_DIR, "jd_lp_pool.json")       # 独立轮动池（与淘宝池隔离）
+JD_LP_INTERVAL_SEC = 60         # 每 1 分钟 1 条（与淘宝 mc_refill_tick 同节奏）
+JD_LP_MIN_PRICE = 10.0          # Boss 2026-11-16 明令：到手价 <10 元的不发群（网站照常展示，仅推送侧过滤）
+# 「最久没发优先 + ts 落盘」天然轮询：一条发完要等其余 281 条都发过（约 4.7 小时）
+# 才会再轮到，无需长冷却（长冷却反而会卡住：282 条 4.7h 发完一轮，6h 冷却会停摆 1.3h）。
+# 只留 30 分钟安全垫防同条扎堆；池的规模由「成品库下架即移除」控制，不做时间退役
+# （时间退役 pop 掉 ts → 成品库还在就重新当新面孔登记 → 重复轰炸，淘宝池踩过这坑）。
+JD_LP_COOLDOWN_SEC = 30 * 60
+_jd_lp_cache = None
+_jd_lp_last = 0.0
+_jd_lp_tail_cnt = 0             # 站尾计数（每 2 条一次，内存即可，重启清零无碍）
+
+
+def _jd_lp_pool():
+    global _jd_lp_cache
+    if _jd_lp_cache is None:
+        _jd_lp_cache = load_json(JD_LP_POOL_FILE, {})
+    return _jd_lp_cache
+
+
+def _jd_lp_price_ok(it):
+    """Boss 2026-11-16：到手价 <10 元不发群。解析不到价格的放行（避免误杀，
+    与 _jd_price_ok 同口径）；网站展示不受此限，仅推送侧过滤。"""
+    try:
+        p = float(str(it.get("price") or "").strip())
+    except Exception:
+        return True
+    return p >= JD_LP_MIN_PRICE
+
+
+def _jd_lp_text(it):
+    """京东低价线报文案：标题 + 到手价/券额 + u.jd.com 链接（链接用什么就出什么，不改写）。"""
+    lines = [str(it.get("t") or "").strip()]
+    price = str(it.get("price") or "").strip()
+    quan = str(it.get("quan") or "").strip()
+    seg = ""
+    if price:
+        seg = "到手%s元" % price
+    if quan and quan not in ("0", "0.0", ""):
+        seg += "（券%s元）" % quan
+    if seg:
+        lines.append(seg)
+    link = str(it.get("link") or "").strip()
+    if link:
+        lines.append(link)
+    return "\n".join([x for x in lines if x]).strip()
+
+
+def jd_lp_register(log=print):
+    """从 lowprice_jd.json 登记/刷新轮动池。已在池只刷字段不动 ts（避免把发过的洗回新面孔）；
+    成品库里消失的商品从池移除（与网站镜像口径一致，源站下架群也不再轮）。"""
+    pool = _jd_lp_pool()
+    try:
+        data = load_json(JD_LP_FILE, {})
+        items = data.get("items") or []
+    except Exception:
+        return
+    live_ids = set()
+    n_new = 0
+    for it in items:
+        gid = str(it.get("id") or "")
+        link = str(it.get("link") or "")
+        if not gid or not link or "u.jd.com" not in link:
+            continue  # 红线：没转上链的绝不发群
+        if not _jd_lp_price_ok(it):
+            continue  # Boss 明令：<10 元不入轮动池（网站照常展示）
+        live_ids.add(gid)
+        keep = {k: it.get(k) for k in ("id", "t", "price", "quan", "oprice", "link", "sales30", "rate")}
+        if gid in pool:
+            pool[gid]["it"] = keep   # 刷新价格/文案，不动 ts/reg_time
+            continue
+        pool[gid] = {"ts": 0, "reg_time": time.time(), "it": keep}
+        n_new += 1
+    # 成品库下架的从池移除（池规模完全跟随成品库，不做时间退役，避免 ts 丢失导致重复轰炸）
+    gone = [g for g in pool if g not in live_ids]
+    for g in gone:
+        pool.pop(g, None)
+    if n_new or gone:
+        save_json(JD_LP_POOL_FILE, pool)
+        log(f"京东低价轮动池：新 {n_new} / 下架 {len(gone)}（池内 {len(pool)}）")
+
+
+def jd_lp_tick(log=print):
+    """每分钟 1 条：从池里挑最久没发（且过冷却）的一条，主群+外部群同内容发。
+    守夜闸+红包静默；站尾每 2 条一次；成功即刷新 ts 实现游标轮转。"""
+    global _jd_lp_last, _jd_lp_tail_cnt
+    now = time.time()
+    if now - _jd_lp_last < JD_LP_INTERVAL_SEC:
+        return
+    _jd_lp_last = now
+    pool = _jd_lp_pool()
+    if not pool:
+        jd_lp_register(log=log)      # 池空则先从成品库登记
+        pool = _jd_lp_pool()
+    if not pool:
+        return
+    hhmm = time.strftime("%H:%M")
+    if keyword_push and hhmm >= keyword_push.NIGHTGATE_HM:
+        return
+    if keyword_push and keyword_push.redpack_mute():
+        return
+    cand = [(g, v) for g, v in pool.items() if now - (v.get("ts") or 0) >= JD_LP_COOLDOWN_SEC]
+    if not cand:
+        return
+    cand.sort(key=lambda kv: kv[1].get("ts") or 0)   # 最久没发的优先
+    # 最终防线：逐条卡价格（池是快照，成品库每3小时刷新但 register 只在池空时跑，
+    # 价格可能滞后；发前再判一次，<10 元直接踢池不推，下一条候选补上）
+    cheap = [g for g, v in cand if not _jd_lp_price_ok(v.get("it") or {})]
+    if cheap:
+        for g in cheap:
+            pool.pop(g, None)   # 低价品踢池，防永久占位占用名额
+        save_json(JD_LP_POOL_FILE, pool)
+        cand = [(g, v) for g, v in cand if g not in set(cheap)]
+    if not cand:
+        return
+    gid, v = cand[0]
+    it = dict(v.get("it") or {})
+    text = _jd_lp_text(it)
+    if not text:
+        pool.pop(gid, None)
+        save_json(JD_LP_POOL_FILE, pool)
+        return
+    _jd_lp_tail_cnt += 1
+    tagged = "【京东低价】" + text
+    tail = SELL2_TAIL if _jd_lp_tail_cnt % 2 == 0 else ""
+    ok, msg = keyword_push._send(tagged + tail, log=log, ext_sync=False)
+    if ok:
+        v["ts"] = now              # 落盘游标，重启不重发
+        save_json(JD_LP_POOL_FILE, pool)
+        _touch_tb_main()
+        if wecom_ext is not None:
+            ext_text = tagged
+            if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
+                ext_text += SELL2_TAIL
+            wecom_ext.enqueue(ext_text)
+        log(f"京东低价已发主群+外部群 {gid} | {str(it.get('t') or '')[:22]}（{msg}）")
+
+
 # ---- 专区动态发现（Boss 2026-10-30 明令）：自动跟进大淘客 /xp/1111 专区的新增与删减。
 # 白名单初始 = Boss 点名的 猫超好货(28)/超级疯狂日(27)；每 10 分钟拉一次 get-promo-config，
 # 白名单外的新专区自动加入（及时补充），白名单内从接口消失的自动移除并清池。
@@ -1545,6 +1688,12 @@ def main():
                 mc_refill_tick(log)
             except Exception as e:
                 log(f"猫超轮播调度异常：{str(e)[:80]}")
+
+            # 京东低价好物轮动（Boss 2026-11-16 明令）：现成 u.jd.com 成品库，每分钟 1 条主群+外部群
+            try:
+                jd_lp_tick(log)
+            except Exception as e:
+                log(f"京东低价轮动异常：{str(e)[:80]}")
 
             # 专区动态发现（Boss 2026-10-30 明令）：新专区自动加入、下线专区自动移除，每 10 分钟一查
             try:
