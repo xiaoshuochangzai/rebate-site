@@ -1000,7 +1000,7 @@ def mc_refill_tick(log=print):
 # ---- 京东低价好物轮动发群（Boss 2026-11-16 明令）----
 # 与淘宝低价好物对称，但京东商品已转好链（lowprice_jd.json 里现成 u.jd.com），
 # 无需后台转链，直接从成品库登记进独立轮动池，每分钟 1 条主群+外部群同节奏发。
-# 口径：标签【京东低价】、链接直接用 u.jd.com、站尾每 2 条一次、守夜闸+红包静默。
+# 口径：标签【京东好价】、链接直接用 u.jd.com、站尾每 2 条一次、守夜闸+红包静默。
 JD_LP_FILE = os.path.join(BASE_DIR, "site", "lowprice_jd.json")   # 数据源：现成成品库
 JD_LP_POOL_FILE = os.path.join(BASE_DIR, "jd_lp_pool.json")       # 独立轮动池（与淘宝池隔离）
 JD_LP_INTERVAL_SEC = 60         # 每 1 分钟 1 条（与淘宝 mc_refill_tick 同节奏）
@@ -1122,7 +1122,7 @@ def jd_lp_tick(log=print):
         save_json(JD_LP_POOL_FILE, pool)
         return
     _jd_lp_tail_cnt += 1
-    tagged = "【京东低价】" + text
+    tagged = "【京东好价】" + text
     tail = SELL2_TAIL if _jd_lp_tail_cnt % 2 == 0 else ""
     ok, msg = keyword_push._send(tagged + tail, log=log, ext_sync=False)
     if ok:
@@ -1134,7 +1134,7 @@ def jd_lp_tick(log=print):
             if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
                 ext_text += SELL2_TAIL
             wecom_ext.enqueue(ext_text)
-        log(f"京东低价已发主群+外部群 {gid} | {str(it.get('t') or '')[:22]}（{msg}）")
+        log(f"京东好价已发主群+外部群 {gid} | {str(it.get('t') or '')[:22]}（{msg}）")
 
 
 # ---- 淘宝低价好物发群（Boss 2026-11-16 明令）：三榜每日筛选，独立轮动池 ----
@@ -1241,7 +1241,7 @@ def tb_lp_daily_tick(log=print):
         save_json(TB_LP_POOL_FILE, pool)
         return
     _tb_lp_tail_cnt += 1
-    tagged = "【淘宝低价】" + text
+    tagged = "【淘宝好价】" + text
     tail = SELL2_TAIL if _tb_lp_tail_cnt % 2 == 0 else ""
     ok, msg = keyword_push._send(tagged + tail, log=log, ext_sync=False)
     if ok:
@@ -1253,7 +1253,7 @@ def tb_lp_daily_tick(log=print):
             if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
                 ext_text += SELL2_TAIL
             wecom_ext.enqueue(ext_text)
-        log(f"淘宝低价已发主群+外部群 {gid[:14]} | {str(it.get('t') or '')[:22]}（{msg}）")
+        log(f"淘宝好价已发主群+外部群 {gid[:14]} | {str(it.get('t') or '')[:22]}（{msg}）")
 
 
 # ---- 专区动态发现（Boss 2026-10-30 明令）：自动跟进大淘客 /xp/1111 专区的新增与删减。
