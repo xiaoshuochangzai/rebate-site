@@ -1037,11 +1037,8 @@ def _jd_lp_text(it):
     lines = [str(it.get("t") or "").strip()]
     price = str(it.get("price") or "").strip()
     quan = str(it.get("quan") or "").strip()
-    seg = ""
-    if price:
-        seg = "到手%s元" % price
-    if quan and quan not in ("0", "0.0", ""):
-        seg += "（券%s元）" % quan
+    # Boss 2026-11-16 17:15：京东低价线报直接给到手价，不跟「券X元」
+    seg = ("到手%s元" % price) if price else ""
     if seg:
         lines.append(seg)
     link = str(it.get("link") or "").strip()
@@ -1138,6 +1135,125 @@ def jd_lp_tick(log=print):
                 ext_text += SELL2_TAIL
             wecom_ext.enqueue(ext_text)
         log(f"京东低价已发主群+外部群 {gid} | {str(it.get('t') or '')[:22]}（{msg}）")
+
+
+# ---- 淘宝低价好物发群（Boss 2026-11-16 明令）：三榜每日筛选，独立轮动池 ----
+# 数据源 = lowprice_auto.run_daily() 每天筛一次的 site/lp_daily.json
+# （三榜 sell2/sell/tui + 佣金额≥4元 + goodsId去重 + 同款归一，现成淘口令/短链，
+#  与网站 lowprice.json 的佣金率>10% 两把尺；不碰历史共享池 tb_refill_mc.json）。
+TB_LP_DAILY_FILE = os.path.join(BASE_DIR, "site", "lp_daily.json")
+TB_LP_POOL_FILE = os.path.join(BASE_DIR, "tb_lp_daily_pool.json")
+TB_LP_INTERVAL_SEC = 60         # 每分钟 1 条（与京东低价/猫超轮播同节奏）
+TB_LP_COOLDOWN_SEC = 30 * 60    # 安全垫（最久没发优先天然轮询，无需长冷却）
+_tb_lp_cache = None
+_tb_lp_last = 0.0
+_tb_lp_date = ""                # 已装载的成品日期，换日重置游标
+_tb_lp_tail_cnt = 0             # 站尾计数（每 2 条一次）
+
+
+def _tb_lp_pool():
+    global _tb_lp_cache
+    if _tb_lp_cache is None:
+        _tb_lp_cache = load_json(TB_LP_POOL_FILE, {})
+    return _tb_lp_cache
+
+
+def _tb_lp_text(it):
+    """淘宝低价线报文案：标题 + 到手价/券额 + 淘口令（s.tb.cn 短链不要，
+    Boss 2026-10-12 红线：PID 明文易被扒，只留淘口令）。"""
+    lines = [str(it.get("t") or "").strip()]
+    price = str(it.get("price") or "").strip()
+    quan = str(it.get("quan") or "").strip()
+    seg = ""
+    if price:
+        seg = "券后%s元" % price
+    if quan and quan not in ("0", "0.0", ""):
+        seg += "（券%s元）" % quan
+    if seg:
+        lines.append(seg)
+    tpwd = str(it.get("tpwd") or "").strip()
+    if tpwd:
+        lines.append(tpwd)
+    return "\n".join([x for x in lines if x]).strip()
+
+
+def tb_lp_daily_tick(log=print):
+    """每天筛一次成品 → 独立池轮动发群。每分钟 1 条：主群+外部群同内容，
+    守夜闸+红包静默；淘宝不过滤价格（Boss 11-16 17:15）；最久没发优先、ts 落盘；换日重置游标。"""
+    global _tb_lp_last, _tb_lp_date, _tb_lp_tail_cnt
+    now = time.time()
+    if now - _tb_lp_last < TB_LP_INTERVAL_SEC:
+        return
+    _tb_lp_last = now
+    # 每天懒触发一次筛选（成品日期 != 今天则重筛；run_daily 内部有同日跳过保护）
+    try:
+        import lowprice_auto
+        daily = load_json(TB_LP_DAILY_FILE, {})
+        if daily.get("date") != time.strftime("%Y-%m-%d"):
+            lowprice_auto.run_daily(log=log)
+            daily = load_json(TB_LP_DAILY_FILE, {})
+    except Exception as e:
+        log(f"淘宝低价每日筛选异常：{str(e)[:80]}")
+        return
+    d = str(daily.get("date") or "")
+    items = daily.get("items") or []
+    if not items:
+        return
+    pool = _tb_lp_pool()
+    if d != _tb_lp_date:
+        # 换日：旧池清空，今日成品重新登记（游标从零，最久没发优先→先发新面孔）
+        pool.clear()
+        for it in items:
+            gid = str(it.get("id") or "")
+            if gid:
+                pool[gid] = {"ts": 0, "it": it}
+        _tb_lp_date = d
+        save_json(TB_LP_POOL_FILE, pool)
+        log(f"淘宝低价轮动池换日重建：{d}（{len(pool)} 条）")
+    else:
+        # 同日：同步成品字段（已在池不动 ts），成品下架的移除
+        live = {str(it.get("id") or "") for it in items}
+        for gid in [g for g in pool if g not in live]:
+            pool.pop(g, None)
+        for it in items:
+            gid = str(it.get("id") or "")
+            if gid in pool:
+                pool[gid]["it"] = it
+    if not pool:
+        return
+    hhmm = time.strftime("%H:%M")
+    if keyword_push and hhmm >= keyword_push.NIGHTGATE_HM:
+        return
+    if keyword_push and keyword_push.redpack_mute():
+        return
+    # Boss 2026-11-16 17:15：淘宝低价**不过滤** 10 元以下（与京东不同）；只要有过冷却 + 淘口令
+    cand = [(g, v) for g, v in pool.items()
+            if now - (v.get("ts") or 0) >= TB_LP_COOLDOWN_SEC
+            and str((v.get("it") or {}).get("tpwd") or "").strip()]
+    if not cand:
+        return
+    cand.sort(key=lambda kv: kv[1].get("ts") or 0)
+    gid, v = cand[0]
+    it = dict(v.get("it") or {})
+    text = _tb_lp_text(it)
+    if not text:
+        pool.pop(gid, None)
+        save_json(TB_LP_POOL_FILE, pool)
+        return
+    _tb_lp_tail_cnt += 1
+    tagged = "【淘宝低价】" + text
+    tail = SELL2_TAIL if _tb_lp_tail_cnt % 2 == 0 else ""
+    ok, msg = keyword_push._send(tagged + tail, log=log, ext_sync=False)
+    if ok:
+        v["ts"] = now
+        save_json(TB_LP_POOL_FILE, pool)
+        _touch_tb_main()
+        if wecom_ext is not None:
+            ext_text = tagged
+            if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
+                ext_text += SELL2_TAIL
+            wecom_ext.enqueue(ext_text)
+        log(f"淘宝低价已发主群+外部群 {gid[:14]} | {str(it.get('t') or '')[:22]}（{msg}）")
 
 
 # ---- 专区动态发现（Boss 2026-10-30 明令）：自动跟进大淘客 /xp/1111 专区的新增与删减。
@@ -1694,6 +1810,12 @@ def main():
                 jd_lp_tick(log)
             except Exception as e:
                 log(f"京东低价轮动异常：{str(e)[:80]}")
+
+            # 淘宝低价好物轮动（Boss 2026-11-16 明令）：三榜每日筛选成品，每分钟 1 条主群+外部群
+            try:
+                tb_lp_daily_tick(log)
+            except Exception as e:
+                log(f"淘宝低价轮动异常：{str(e)[:80]}")
 
             # 专区动态发现（Boss 2026-10-30 明令）：新专区自动加入、下线专区自动移除，每 10 分钟一查
             try:

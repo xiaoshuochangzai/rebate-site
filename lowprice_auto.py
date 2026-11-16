@@ -21,10 +21,17 @@ os.chdir(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
 
 LOWPRICE_PATH = os.path.join("site", "lowprice.json")
+DAILY_PATH = os.path.join("site", "lp_daily.json")   # 三榜每日筛选成品（仅供发群，不上站）
 CACHE = "lp_conv_cache.json"
 MAX_ITEMS = 200          # 滚动保留条数
-MIN_RATE = 10.0          # Boss 明令：佣金率 >10%
+MIN_RATE = 10.0          # Boss 明令：佣金率 >10%（网站 lowprice.json 口径）
 GAP = 0.8                # 转链条间间隔（防风控）
+
+# ---- 三榜每日筛选发群（Boss 2026-11-16 明令）：佣金额≥4元 + 商品id去重 + 同款归一 ----
+# 与网站 lowprice.json（佣金率>10%）是两把尺：发群用「佣金额≥4元」(_tb_comm_ok 同款)，
+# 每天筛一次、独立于历史共享池 tb_refill_mc.json（那个池只进不出堆了 1200 条老货）。
+DAILY_MIN_COMM = 4.0     # 佣金额下限（元）= commission_rate × price / 100
+DAILY_RANKS = ("sell2", "sell", "tui")   # 2h热销 / 今日热销 / 全天热推
 
 _log_state = {"md5": ""}
 
@@ -105,6 +112,117 @@ def _filter_rank_all(log=_log):
     out = [x for x, _p in best.values()]
     log(f"低价好物：三榜并集 {len(merged)} 条，同款归一后 {len(out)} 条")
     return out
+
+
+def lp_daily_candidates(log=_log):
+    """Boss 2026-11-16 明令的发群口径：三榜并集（sell2/sell/tui）→ goodsId 去重
+    （先到先得）→ 佣金额≥4元 → 同款归一（标题前10字留券后价最低）。
+    与网站 lowprice.json 的「佣金率>10%」是两把尺，互不干扰。返回 dtk 原始条目。"""
+    import re as _re
+    merged, seen = [], set()
+    for kind in DAILY_RANKS:
+        try:
+            lst = _filter_rank(kind)  # 已含 佣金率>10% + price_cap 价格门槛
+        except Exception as e:
+            log(f"每日筛选：{kind} 榜拉取异常 {str(e)[:50]}，跳过")
+            continue
+        for it in lst:
+            gid = str(it.get("goodsid") or it.get("id") or "")
+            if not gid or gid in seen:
+                continue
+            seen.add(gid)
+            it["_kind"] = kind
+            merged.append(it)
+    # 佣金额≥4元（与 _tb_comm_ok 同款口径：rate×price/100）
+    ok = []
+    for it in merged:
+        try:
+            comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
+        except Exception:
+            comm = 0.0
+        if comm >= DAILY_MIN_COMM:
+            ok.append(it)
+    # 同款归一：标题去标点前10字，留券后价最低
+    best = {}
+    for it in ok:
+        k = _re.sub(r'[\s【】\[\]（）()!！,，。.:：;；"“”‘’\-—_/|｜＋+]', "",
+                    str(it.get("d_title") or it.get("title") or ""))[:10]
+        k = k or ("id:" + str(it.get("id") or ""))
+        try:
+            p = float(it.get("price") or 0)
+        except Exception:
+            p = 0.0
+        cur = best.get(k)
+        if cur is None or p < cur[1]:
+            best[k] = (it, p)
+    out = [it for it, _p in best.values()]
+    log(f"每日筛选：三榜 {sum(1 for _ in merged)} →佣金额≥{DAILY_MIN_COMM:g} {len(ok)} →同款归一 {len(out)} 条")
+    return out
+
+
+def run_daily(log=_log, force=False):
+    """每天筛选一次：三榜筛选 → 复用 lp_conv_cache 转链 → 落盘 site/lp_daily.json。
+    带 date 字段（今日日期），发群侧据此判断是否换日重置游标。同日重复调用不重转链。"""
+    import welfare_convert
+    today = time.strftime("%Y-%m-%d")
+    try:
+        cur = json.load(open(DAILY_PATH, encoding="utf-8"))
+    except Exception:
+        cur = {}
+    if (not force) and cur.get("date") == today and (cur.get("items") or []):
+        log(f"每日筛选：{today} 已筛过（{len(cur.get('items') or [])} 条），跳过")
+        return
+    cand = lp_daily_candidates(log=log)
+    if not cand:
+        log("每日筛选：候选为空，本日跳过（保留昨日成品）")
+        return
+    cache = _load_cache()
+    items, n_new, n_fail = [], 0, 0
+    for it in cand:
+        gid = str(it.get("goodsid") or it.get("id") or "")
+        r = cache.get(gid) or {}
+        link = r.get("link") or ""
+        tpwd = r.get("tpwd") or ""
+        if not link:
+            try:
+                r = welfare_convert.conv(gid, it.get("d_title") or it.get("title") or "商品")
+            except Exception as e:
+                log(f"每日筛选转链失败 {gid[:12]}：{str(e)[:50]}，跳过")
+                n_fail += 1
+                continue
+            link = r.get("link") or ""
+            tpwd = r.get("tpwd") or ""
+            if not link:
+                n_fail += 1
+                continue
+            cache[gid] = r
+            n_new += 1
+            time.sleep(GAP)
+        try:
+            price = float(it.get("price") or 0)
+            quan = float(it.get("coupon_amount") or 0)
+            oprice = float(it.get("original_price") or 0)
+        except Exception:
+            price, quan, oprice = 0.0, 0.0, 0.0
+        items.append({
+            "id": gid,
+            "t": it.get("d_title") or it.get("title") or "",
+            "price": ("%.1f" % price).rstrip("0").rstrip("."),
+            "quan": ("%.1f" % quan).rstrip("0").rstrip("."),
+            "oprice": ("%.1f" % oprice).rstrip("0").rstrip("."),
+            "link": link,
+            "tpwd": tpwd,
+            "sales30": it.get("sales_2h") or it.get("sales_num") or 0,
+            "_kind": it.get("_kind") or "sell2",
+        })
+    _save_cache(cache)
+    data = {"date": today, "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "total": len(items), "items": items}
+    try:
+        json.dump(data, open(DAILY_PATH, "w", encoding="utf-8"), ensure_ascii=False)
+        log(f"每日筛选落盘 {DAILY_PATH}：{len(items)} 条（新转 {n_new} / 失败 {n_fail}）")
+    except Exception as e:
+        log(f"每日筛选落盘失败：{str(e)[:60]}")
 
 
 def fetch_lowprice():
