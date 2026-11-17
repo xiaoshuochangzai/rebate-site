@@ -1081,53 +1081,93 @@ def jd_lp_register(log=print):
         log(f"京东低价轮动池：新 {n_new} / 下架 {len(gone)}（池内 {len(pool)}）")
 
 
+GOOD_RESCREEN_GAP = 3600   # Boss 11-17 明令：每发完一轮，间隔 1 小时才重筛下一批
+
+
+def _good_batch(state, state_path, batch, items, log, label):
+    """筛→发→重筛循环的核心判定（京东/淘宝共用）：
+    返回本轮要发的一条 (gid, it)，或 None（本 tick 不发：批次空/冷却中/无货）。
+    state 结构：{batch_id, cursor, round_done_ts, rescreen_at}
+    - batch_id 变 → 新批次，游标归零
+    - cursor 走完一轮 → 标 round_done_ts
+    - 距 round_done_ts 满 1 小时 → 触发调用方重筛（由调用方判断），本 tick 先不发
+    """
+    now = time.time()
+    bid = str(batch or "")
+    st = state
+    if st.get("batch_id") != bid:
+        st = {"batch_id": bid, "cursor": 0, "round_done_ts": 0, "rescreen_at": 0}
+    if not items:
+        save_json(state_path, st)
+        return None
+    cursor = int(st.get("cursor") or 0)
+    done_ts = float(st.get("round_done_ts") or 0)
+    # 一轮发完：等 1 小时冷却，期间不发（重筛由调用方在冷却结束后触发）
+    if cursor >= len(items):
+        if not done_ts:
+            st["round_done_ts"] = now
+            save_json(state_path, st)
+        return None
+    # 发下一条
+    if cursor >= len(items):
+        return None
+    idx = cursor
+    st["cursor"] = cursor + 1
+    if st["cursor"] >= len(items):
+        st["round_done_ts"] = now
+    save_json(state_path, st)
+    it = items[idx]
+    return (str(it.get("id") or idx), it)
+
+
 def jd_lp_tick(log=print):
-    """每分钟 1 条：从池里挑最久没发（且过冷却）的一条，主群+外部群同内容发。
-    守夜闸+红包静默；站尾每 2 条一次；成功即刷新 ts 实现游标轮转。"""
+    """Boss 11-17：筛一批→每分钟1条发完→隔1h→重筛→再发，循环往复（允许重复）。
+    京东筛选 = lowprice_jd_auto.rescreen()（折京客全量+转链+落盘 lowprice_jd.json）。"""
     global _jd_lp_last, _jd_lp_tail_cnt
     now = time.time()
     if now - _jd_lp_last < JD_LP_INTERVAL_SEC:
         return
     _jd_lp_last = now
-    pool = _jd_lp_pool()
-    if not pool:
-        jd_lp_register(log=log)      # 池空则先从成品库登记
-        pool = _jd_lp_pool()
-    if not pool:
-        return
     hhmm = time.strftime("%H:%M")
     if keyword_push and hhmm >= keyword_push.NIGHTGATE_HM:
         return
     if keyword_push and keyword_push.redpack_mute():
         return
-    cand = [(g, v) for g, v in pool.items() if now - (v.get("ts") or 0) >= JD_LP_COOLDOWN_SEC]
-    if not cand:
+    state_path = os.path.join(BASE_DIR, "jd_lp_round.json")
+    st = load_json(state_path, {})
+    # 触发重筛的两种情形：①首次运行（无状态文件）②一轮发完且满 1 小时
+    done_ts = float(st.get("round_done_ts") or 0)
+    need_screen = (not st.get("batch_id")) or (done_ts and now - done_ts >= GOOD_RESCREEN_GAP)
+    if need_screen:
+        try:
+            import lowprice_jd_auto
+            n = lowprice_jd_auto.rescreen(log=log)   # 带锁重筛，落盘 lowprice_jd.json
+            log(f"京东好价：{'首次运行' if not st.get('batch_id') else '一轮发完隔1h'}，已重筛（{n} 条）")
+        except Exception as e:
+            log(f"京东好价重筛异常：{str(e)[:80]}")
+    # 读本批成品 → 过滤（有链+≥10元）→ 判定发哪条
+    try:
+        data = load_json(JD_LP_FILE, {})
+    except Exception:
         return
-    cand.sort(key=lambda kv: kv[1].get("ts") or 0)   # 最久没发的优先
-    # 最终防线：逐条卡价格（池是快照，成品库每3小时刷新但 register 只在池空时跑，
-    # 价格可能滞后；发前再判一次，<10 元直接踢池不推，下一条候选补上）
-    cheap = [g for g, v in cand if not _jd_lp_price_ok(v.get("it") or {})]
-    if cheap:
-        for g in cheap:
-            pool.pop(g, None)   # 低价品踢池，防永久占位占用名额
-        save_json(JD_LP_POOL_FILE, pool)
-        cand = [(g, v) for g, v in cand if g not in set(cheap)]
-    if not cand:
+    batch = str(data.get("batch_id") or data.get("ts") or "")
+    items = [x for x in (data.get("items") or [])
+             if str(x.get("link") or "").strip() and "u.jd.com" in str(x.get("link"))
+             and _jd_lp_price_ok(x)]
+    if not items:
         return
-    gid, v = cand[0]
-    it = dict(v.get("it") or {})
+    got = _good_batch(st, state_path, batch, items, log, "京东好价")
+    if not got:
+        return
+    gid, it = got
     text = _jd_lp_text(it)
     if not text:
-        pool.pop(gid, None)
-        save_json(JD_LP_POOL_FILE, pool)
         return
     _jd_lp_tail_cnt += 1
     tagged = "【京东好价】" + text
     tail = SELL2_TAIL if _jd_lp_tail_cnt % 2 == 0 else ""
     ok, msg = keyword_push._send(tagged + tail, log=log, ext_sync=False)
     if ok:
-        v["ts"] = now              # 落盘游标，重启不重发
-        save_json(JD_LP_POOL_FILE, pool)
         _touch_tb_main()
         if wecom_ext is not None:
             ext_text = tagged
@@ -1178,75 +1218,52 @@ def _tb_lp_text(it):
 
 
 def tb_lp_daily_tick(log=print):
-    """每天筛一次成品 → 独立池轮动发群。每分钟 1 条：主群+外部群同内容，
-    守夜闸+红包静默；淘宝不过滤价格（Boss 11-16 17:15）；最久没发优先、ts 落盘；换日重置游标。"""
-    global _tb_lp_last, _tb_lp_date, _tb_lp_tail_cnt
+    """Boss 11-17：筛一批→每分钟1条发完→隔1h→重筛→再发，循环往复（允许重复）。
+    淘宝筛选 = lowprice_auto.run_daily()（qlist 网关：佣≥4元/≤100/日销≥50，落盘 lp_daily.json）。"""
+    global _tb_lp_last, _tb_lp_tail_cnt
     now = time.time()
     if now - _tb_lp_last < TB_LP_INTERVAL_SEC:
         return
     _tb_lp_last = now
-    # 每天懒触发一次筛选（成品日期 != 今天则重筛；run_daily 内部有同日跳过保护）
-    try:
-        import lowprice_auto
-        daily = load_json(TB_LP_DAILY_FILE, {})
-        if daily.get("date") != time.strftime("%Y-%m-%d"):
-            lowprice_auto.run_daily(log=log)
-            daily = load_json(TB_LP_DAILY_FILE, {})
-    except Exception as e:
-        log(f"淘宝低价每日筛选异常：{str(e)[:80]}")
-        return
-    d = str(daily.get("date") or "")
-    items = daily.get("items") or []
-    if not items:
-        return
-    pool = _tb_lp_pool()
-    if d != _tb_lp_date:
-        # 换日：旧池清空，今日成品重新登记（游标从零，最久没发优先→先发新面孔）
-        pool.clear()
-        for it in items:
-            gid = str(it.get("id") or "")
-            if gid:
-                pool[gid] = {"ts": 0, "it": it}
-        _tb_lp_date = d
-        save_json(TB_LP_POOL_FILE, pool)
-        log(f"淘宝低价轮动池换日重建：{d}（{len(pool)} 条）")
-    else:
-        # 同日：同步成品字段（已在池不动 ts），成品下架的移除
-        live = {str(it.get("id") or "") for it in items}
-        for gid in [g for g in pool if g not in live]:
-            pool.pop(g, None)
-        for it in items:
-            gid = str(it.get("id") or "")
-            if gid in pool:
-                pool[gid]["it"] = it
-    if not pool:
-        return
     hhmm = time.strftime("%H:%M")
     if keyword_push and hhmm >= keyword_push.NIGHTGATE_HM:
         return
     if keyword_push and keyword_push.redpack_mute():
         return
-    # Boss 2026-11-16 17:15：淘宝低价**不过滤** 10 元以下（与京东不同）；只要有过冷却 + 淘口令
-    cand = [(g, v) for g, v in pool.items()
-            if now - (v.get("ts") or 0) >= TB_LP_COOLDOWN_SEC
-            and str((v.get("it") or {}).get("tpwd") or "").strip()]
-    if not cand:
+    state_path = os.path.join(BASE_DIR, "tb_lp_round.json")
+    st = load_json(state_path, {})
+    # 触发重筛的两种情形：①首次运行（无状态文件）②一轮发完且满 1 小时
+    done_ts = float(st.get("round_done_ts") or 0)
+    need_screen = (not st.get("batch_id")) or (done_ts and now - done_ts >= GOOD_RESCREEN_GAP)
+    if need_screen:
+        try:
+            import lowprice_auto
+            n = lowprice_auto.run_daily(log=log)
+            log(f"淘宝好价：{'首次运行' if not st.get('batch_id') else '一轮发完隔1h'}，已重筛（{n} 条）")
+        except Exception as e:
+            log(f"淘宝好价重筛异常：{str(e)[:80]}")
+    # 读本批成品 → 有淘口令 → 判定发哪条（淘宝不过滤价格）
+    try:
+        daily = load_json(TB_LP_DAILY_FILE, {})
+    except Exception:
         return
-    cand.sort(key=lambda kv: kv[1].get("ts") or 0)
-    gid, v = cand[0]
-    it = dict(v.get("it") or {})
+    batch = str(daily.get("batch_id") or daily.get("ts") or "")
+    items = [x for x in (daily.get("items") or [])
+             if str((x.get("tpwd") or "")).strip()]
+    if not items:
+        return
+    got = _good_batch(st, state_path, batch, items, log, "淘宝好价")
+    if not got:
+        return
+    gid, it = got
     text = _tb_lp_text(it)
     if not text:
-        pool.pop(gid, None)
-        save_json(TB_LP_POOL_FILE, pool)
         return
     _tb_lp_tail_cnt += 1
     tagged = "【淘宝好价】" + text
     tail = SELL2_TAIL if _tb_lp_tail_cnt % 2 == 0 else ""
     ok, msg = keyword_push._send(tagged + tail, log=log, ext_sync=False)
     if ok:
-        v["ts"] = now
-        save_json(TB_LP_POOL_FILE, pool)
         _touch_tb_main()
         if wecom_ext is not None:
             ext_text = tagged

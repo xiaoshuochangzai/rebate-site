@@ -30,8 +30,12 @@ GAP = 0.8                # 转链条间间隔（防风控）
 # ---- 三榜每日筛选发群（Boss 2026-11-16 明令）：佣金额≥4元 + 商品id去重 + 同款归一 ----
 # 与网站 lowprice.json（佣金率>10%）是两把尺：发群用「佣金额≥4元」(_tb_comm_ok 同款)，
 # 每天筛一次、独立于历史共享池 tb_refill_mc.json（那个池只进不出堆了 1200 条老货）。
-DAILY_MIN_COMM = 4.0     # 佣金额下限（元）= commission_rate × price / 100
-DAILY_RANKS = ("sell2", "sell", "tui")   # 2h热销 / 今日热销 / 全天热推
+DAILY_MIN_COMM = 4.0     # 佣金额下限（元）= commissionStart 参数（不是佣金率！）
+DAILY_PRICE_CAP = 100.0  # 券后价上限 = priceHigh 参数
+DAILY_SALES_MIN = 50     # 今日热销下限 = salesDaily 参数（Boss 11-17 加，控量）
+DAILY_PAGE_SIZE = 100
+DAILY_MAX_PAGES = 10     # 约 3 页（238 条/100），留余量
+DAILY_RANKS = ("sell2", "sell", "tui")   # 保留：网站 lowprice.json 三榜口径仍用
 
 _log_state = {"md5": ""}
 
@@ -115,36 +119,49 @@ def _filter_rank_all(log=_log):
 
 
 def lp_daily_candidates(log=_log):
-    """Boss 2026-11-16 明令的发群口径：三榜并集（sell2/sell/tui）→ goodsId 去重
-    （先到先得）→ 佣金额≥4元 → 同款归一（标题前10字留券后价最低）。
-    与网站 lowprice.json 的「佣金率>10%」是两把尺，互不干扰。返回 dtk 原始条目。"""
+    """Boss 2026-11-17 明令的发群口径（替换原三榜）：大淘客 qlist 网关 search-v2，
+    条件 = 佣金额≥4元(commissionStart) + 券后≤100(priceHigh) + 今日热销≥50(salesDaily)，
+    全站不限店铺（约 238 条）。分页拉全量 → 同款归一（标题前10字留券后价最低）。
+    免登录裸调（go_getway 代理），字段与转链链路兼容。返回 dtk 原始条目。"""
     import re as _re
+    import requests as _rq
+    url = "https://dtkapi.ffquan.cn/go_getway/proxy/search-v2"
+    base = {"platform": 1, "px": "zh", "version": 2, "api_v": 1,
+            "flow_identifier": "normal", "priceHigh": int(DAILY_PRICE_CAP),
+            "commissionStart": int(DAILY_MIN_COMM), "salesDaily": DAILY_SALES_MIN}
+    s = _rq.Session()
+    s.trust_env = False
+    s.headers["User-Agent"] = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 Chrome/126.0 Safari/537.36")
+    s.headers["Referer"] = "https://www.dataoke.com/xp/qlist"
     merged, seen = [], set()
-    for kind in DAILY_RANKS:
+    total = None
+    for page in range(1, DAILY_MAX_PAGES + 1):
+        p = dict(base); p["page"] = page
         try:
-            lst = _filter_rank(kind)  # 已含 佣金率>10% + price_cap 价格门槛
+            j = s.get(url, params=p, timeout=25).json()
         except Exception as e:
-            log(f"每日筛选：{kind} 榜拉取异常 {str(e)[:50]}，跳过")
-            continue
+            log(f"每日筛选：qlist 第{page}页请求异常 {str(e)[:50]}")
+            if not merged:   # 首页就失败 → 返回空（调用方保留旧池）
+                return []
+            break
+        search = ((j.get("data") or {}).get("search") or {})
+        lst = search.get("list") or []
+        if total is None:
+            total = int(search.get("total") or 0)
         for it in lst:
             gid = str(it.get("goodsid") or it.get("id") or "")
             if not gid or gid in seen:
                 continue
             seen.add(gid)
-            it["_kind"] = kind
+            it["_kind"] = "qlist"
             merged.append(it)
-    # 佣金额≥4元（与 _tb_comm_ok 同款口径：rate×price/100）
-    ok = []
-    for it in merged:
-        try:
-            comm = float(it.get("commission_rate") or 0) * float(it.get("price") or 0) / 100.0
-        except Exception:
-            comm = 0.0
-        if comm >= DAILY_MIN_COMM:
-            ok.append(it)
+        if len(lst) < DAILY_PAGE_SIZE or (total and len(merged) >= total):
+            break
+        time.sleep(0.15)
     # 同款归一：标题去标点前10字，留券后价最低
     best = {}
-    for it in ok:
+    for it in merged:
         k = _re.sub(r'[\s【】\[\]（）()!！,，。.:：;；"“”‘’\-—_/|｜＋+]', "",
                     str(it.get("d_title") or it.get("title") or ""))[:10]
         k = k or ("id:" + str(it.get("id") or ""))
@@ -156,26 +173,22 @@ def lp_daily_candidates(log=_log):
         if cur is None or p < cur[1]:
             best[k] = (it, p)
     out = [it for it, _p in best.values()]
-    log(f"每日筛选：三榜 {sum(1 for _ in merged)} →佣金额≥{DAILY_MIN_COMM:g} {len(ok)} →同款归一 {len(out)} 条")
+    log(f"每日筛选：qlist(佣≥{DAILY_MIN_COMM:g}/≤{DAILY_PRICE_CAP:g}/日销≥{DAILY_SALES_MIN}) "
+        f"total={total} 抓 {len(merged)} →同款归一 {len(out)} 条")
     return out
 
 
 def run_daily(log=_log, force=False):
-    """每天筛选一次：三榜筛选 → 复用 lp_conv_cache 转链 → 落盘 site/lp_daily.json。
-    带 date 字段（今日日期），发群侧据此判断是否换日重置游标。同日重复调用不重转链。"""
+    """筛一批（qlist 网关）→ 复用 lp_conv_cache 转链 → 落盘 site/lp_daily.json。
+    Boss 11-17：由发群循环调用「发完一轮→隔1h→再筛一批」，本函数只管筛+转+落盘。
+    每次调用生成新的 batch_id（时间戳），发群侧据此重置游标开始新一轮。
+    force 参数保留兼容（历史调用），现每次调用都真筛。返回落盘条数。"""
     import welfare_convert
     today = time.strftime("%Y-%m-%d")
-    try:
-        cur = json.load(open(DAILY_PATH, encoding="utf-8"))
-    except Exception:
-        cur = {}
-    if (not force) and cur.get("date") == today and (cur.get("items") or []):
-        log(f"每日筛选：{today} 已筛过（{len(cur.get('items') or [])} 条），跳过")
-        return
     cand = lp_daily_candidates(log=log)
     if not cand:
-        log("每日筛选：候选为空，本日跳过（保留昨日成品）")
-        return
+        log("每日筛选：候选为空，本轮跳过（保留上批成品）")
+        return 0
     cache = _load_cache()
     items, n_new, n_fail = [], 0, 0
     for it in cand:
@@ -216,13 +229,16 @@ def run_daily(log=_log, force=False):
             "_kind": it.get("_kind") or "sell2",
         })
     _save_cache(cache)
+    batch_id = time.strftime("%Y%m%d%H%M%S")
     data = {"date": today, "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "total": len(items), "items": items}
+            "batch_id": batch_id, "total": len(items), "items": items}
     try:
         json.dump(data, open(DAILY_PATH, "w", encoding="utf-8"), ensure_ascii=False)
-        log(f"每日筛选落盘 {DAILY_PATH}：{len(items)} 条（新转 {n_new} / 失败 {n_fail}）")
+        log(f"每日筛选落盘 {DAILY_PATH}：{len(items)} 条（批次 {batch_id}，新转 {n_new} / 失败 {n_fail}）")
+        return len(items)
     except Exception as e:
         log(f"每日筛选落盘失败：{str(e)[:60]}")
+        return 0
 
 
 def fetch_lowprice():

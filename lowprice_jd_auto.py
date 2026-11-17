@@ -608,12 +608,24 @@ def run_once(log=_log, limit=None, dry=False, src20033=None):
     return len(out_items)
 
 
+# 筛选锁（Boss 11-17：发群循环发完一轮会主动触发重筛 run_once，与本模块 3 小时线程
+# 可能并发写 lowprice_jd.json；同一把锁串行化，防文件写坏）。
+SCREEN_LOCK = threading.Lock()
+
+
+def rescreen(log=_log):
+    """供发群循环调用的带锁重筛（拉折京客全量+转新链+落盘+KV），返回落盘条数。"""
+    with SCREEN_LOCK:
+        return run_once(log=log)
+
+
 def start_thread(log=_log):
     """启动时先跑一次（保证重启后数据新鲜），之后对齐到每 3 小时边界整点全量覆盖。"""
     def loop():
         while True:
             try:
-                run_once(log=log)
+                with SCREEN_LOCK:
+                    run_once(log=log)
             except Exception as e:
                 log("本轮异常：%s" % str(e)[:120])
             now = time.time()
