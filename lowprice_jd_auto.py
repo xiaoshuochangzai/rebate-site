@@ -483,22 +483,22 @@ def qualifies(it):
 
 
 def convert_one(it, log=_log):
-    """调折京客官方京东转链，返回 u.jd.com 短链；失败/非短链返回 ''。"""
-    c = _conf()
+    """Boss 2026-11-17 15:43 实锤：折京客 API 出链佣金归京粉渠道（落地
+    utm_campaign=t_2018553268，非 Boss 的 t_1001330651，unionId 被无视）——全线报废。
+    换精品库引擎（jp_convert，Boss 京品库账号，线报链路长期验证落地带
+    t_1001330651_1589_169_0）。京粉链接/券链接均可作万能转链输入，~1s/条。"""
     mid = str(it.get("item_url") or it.get("tao_id") or "").strip()
     if not mid:
         return ""
-    p = {"appkey": c["appkey"], "materialId": mid,
-         "unionId": c.get("unionId", ""), "chainType": c.get("chainType", 2)}
+    deal = {"list": [{"item_id": mid}]}
     try:
-        j = _session().get(API_CONV, params=p, timeout=25).json()
-        inner = (j.get("jd_union_open_promotion_byunionid_get_response") or {}).get("result")
-        d = json.loads(inner) if isinstance(inner, str) else (inner or {})
-        u = str((d.get("data") or {}).get("shortURL") or "").strip()
+        import jp_convert
+        jp_convert.convert_all_browser([deal])
+        u = str((deal["list"][0] or {}).get("url") or "").strip()
     except Exception as e:
-        log("转链异常 %s：%s" % (str(it.get("tao_id"))[:12], str(e)[:60]))
+        log("精品库转链异常 %s：%s" % (str(it.get("tao_id"))[:12], str(e)[:60]))
         return ""
-    # 红线：必须是绑定我们联盟的 u.jd.com 短链
+    # 红线：必须是 u.jd.com 短链
     if not u or "u.jd.com" not in u:
         return ""
     return u
