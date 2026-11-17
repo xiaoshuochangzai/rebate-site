@@ -245,7 +245,7 @@ def _best_coupon(it):
     return best
 
 
-def build_20033_items(raw_list, log=_log):
+def build_20033_items(raw_list, log=_log, label="20033"):
     """把 unionSearchRecommend 原始商品映射成与 api_all 同形 dict。
     破价品（无可用券）跳过；tao_id 用 jd2_ 前缀避免与 api_all 的 tao_id 碰撞。"""
     out, n_skip = {}, 0
@@ -261,6 +261,9 @@ def build_20033_items(raw_list, log=_log):
         img = str(it.get("imageUrl") or "").strip()
         if img and not img.startswith("http"):
             img = IMG_BASE + img
+        # skuTagList 标签（Boss 2026-11-17：自营/超级补贴字样发群文案用）
+        tags = [str(t.get("name") or "").strip()
+                for t in (it.get("skuTagList") or []) if t.get("name")]
         gid = "jd2_" + sku
         out[gid] = {
             "tao_id": gid,
@@ -274,8 +277,9 @@ def build_20033_items(raw_list, log=_log):
             "pict_url": img,
             "size": float((it.get("purchasePriceInfo") or {}).get("thresholdPrice") or it.get("wlPrice") or 0),
             "_src": "20033",
+            "tags": tags,            # 例：["自营","超级补贴","同类超低价","7天无理由退货"]
         }
-    log("20033 建项：可用券商品 %d 条，破价/无券跳过 %d 条" % (len(out), n_skip))
+    log("%s 建项：可用券商品 %d 条，破价/无券跳过 %d 条" % (label, len(out), n_skip))
     return out
 
 
@@ -297,16 +301,17 @@ def load_offline_20033(log=_log):
     return raws
 
 
-def fetch_20033_cdp(log=_log):
-    """连 9222 浏览器里的 20033 活动页 tab，Network 拦截其自身 unionSearchRecommend
-    分页请求（滚动到底触发），抓取商品。
+ACT_20033_URL = "https://jingfen.jd.com/item?u_act_p=union-activity&union_page_id=20033"
+ACT_21217_URL = "https://jingfen.jd.com/item?u_act_p=union-activity&union_page_id=21217"
 
-    关键前置：jingfen.jd.com 活动页要求移动端 JD 登录态，专用 .jd-bot-profile
-    只有 union.jd.com 会话 → 未登录时页面重定向到 plogin.m.jd.com 登录墙，
-    此时直接跳过（返回 []），由离线种子兜底，绝不卡主流程。
-    已登录时：真实滚轮触发 Taro scroll-view 的 onScrollToLower（加载守卫需
-    每次等待释放，故每轮滚完等 2.5s），逐步翻完所有页。
-    无浏览器/无 tab/异常 → 优雅返回 []，由全站库兜底。"""
+
+def _fetch_activity_cdp(page_id, default_url, label, log=_log):
+    """抓京粉活动页全量商品（Boss 2026-11-17 实测定稿的姿势，20033/21217 共用）：
+    ①从现有该活动 tab 取完整 URL（必须带 playId 活动场次参数，裸 URL 不发数据请求）；
+    ②开「新 tab」→ Network 监听就绪 → 才导航（先建后导，否则首屏请求全错过）→
+    真实滚轮翻页（每轮等 2.5s 放 onScrollToLower 加载守卫）→ 抓全部 unionSearchRecommend；
+    ③抓完关 tab，绝不重载 Boss 正在看的页面。
+    登录墙/无浏览器/异常 → 优雅返回 []，由离线种子兜底。"""
     try:
         import websocket
         import urllib.request as _ur
@@ -314,16 +319,19 @@ def fetch_20033_cdp(log=_log):
         try:
             tabs = json.loads(OP.open("http://127.0.0.1:%d/json/list" % CDP_PORT, timeout=5).read())
         except Exception as e:
-            log("20033：9222 浏览器未响应（%s），跳过，仅离线种子兜底" % str(e)[:40])
+            log("%s：9222 浏览器未响应（%s），跳过，仅离线种子兜底" % (label, str(e)[:40]))
             return []
-        tab = next((t for t in tabs if "union_page_id=20033" in (t.get("url") or "")), None)
-        if not tab:
-            jt = next((t for t in tabs if t.get("type") == "page" and "jd.com" in (t.get("url") or "")), None)
-            if not jt:
-                log("20033：无可用 jd 标签，跳过")
-                return []
-            tab = jt
-        ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+        # 取现有该活动 tab 的完整 URL（带 playId；没有就用默认）
+        t_act = next((t for t in tabs if "union_page_id=%s" % page_id in (t.get("url") or "")), None)
+        fetch_url = (t_act or {}).get("url") or default_url
+        # 开空白新 tab（不碰 Boss 的页面）
+        try:
+            ntab = json.loads(OP.open(_ur.Request(
+                "http://127.0.0.1:%d/json/new?about:blank" % CDP_PORT, method="PUT"), timeout=8).read())
+        except Exception as e:
+            log("%s：开新 tab 失败（%s），跳过" % (label, str(e)[:40]))
+            return []
+        ws = websocket.create_connection(ntab["webSocketDebuggerUrl"], timeout=60, suppress_origin=True)
         _id = [0]
         def send(m, p=None):
             _id[0] += 1
@@ -338,26 +346,9 @@ def fetch_20033_cdp(log=_log):
                 if m.get("id", 0) > i:
                     return {}
         send("Network.enable"); send("Page.enable"); send("Input.enable")
-        # 重载到 20033 页
-        send("Page.navigate", {"url": JD20033_URL})
-        time.sleep(5)
-        # 登录墙检测：未登录会 302 到 plogin.m.jd.com
-        chk = send("Runtime.evaluate", {"expression": "location.href", "returnByValue": True})
-        hr = recv(chk, 10)
-        cur_url = (hr.get("result", {}).get("result", {}) or {}).get("value", "") or ""
-        if "plogin.m.jd.com" in cur_url or "login" in cur_url:
-            log("20033：检测到登录墙（jingfen 会话缺失），跳过实时抓取，回退离线种子")
-            ws.close()
-            return []
+        send("Page.navigate", {"url": fetch_url})   # 监听就绪后才导航（保住首屏请求）
         reqs, bodies, no_new = {}, {}, 0
-        # 先来一脚滚轮触发首屏加载
-        send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": 700, "y": 450,
-                                          "deltaX": 0, "deltaY": 2000, "modifiers": 0})
-        time.sleep(2)
-        for _ in range(MAX_20033_SCROLL):
-            send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": 700, "y": 450,
-                                              "deltaX": 0, "deltaY": 4000, "modifiers": 0})
-            deadline = time.time() + 2.5   # 等加载守卫释放，避免 onScrollToLower 被吞
+        def capture(deadline):
             got = 0
             while time.time() < deadline:
                 try:
@@ -381,12 +372,25 @@ def fetch_20033_cdp(log=_log):
                             import base64
                             body = base64.b64decode(body).decode("utf-8", "ignore")
                         bodies[rid] = body
-                        try:
-                            got += len(parse_20033_response(json.loads(body)))
-                        except Exception:
-                            pass
+                        got += 1
+            return got
+        capture(time.time() + 6)   # 首屏
+        def _total():
+            n = 0
+            for b in bodies.values():
+                try:
+                    n += len(parse_20033_response(json.loads(b)))
+                except Exception:
+                    pass
+            return n
+        for _ in range(MAX_20033_SCROLL):
+            send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": 400, "y": 450,
+                                              "deltaX": 0, "deltaY": 4000, "modifiers": 0})
+            got = capture(time.time() + 2.5)
             no_new = 0 if got else no_new + 1
-            if no_new >= 4:
+            if no_new >= 6:
+                break
+            if _total() >= 340:
                 break
         all_items = []
         for rid, body in bodies.items():
@@ -395,11 +399,44 @@ def fetch_20033_cdp(log=_log):
             except Exception:
                 pass
         ws.close()
-        log("20033 CDP 实时抓取：%d 个分页响应 / %d 商品（去重前）" % (len(bodies), len(all_items)))
+        try:
+            OP.open(_ur.Request("http://127.0.0.1:%d/json/close/%s" % (CDP_PORT, ntab["id"]),
+                                method="PUT"), timeout=5)
+        except Exception:
+            pass
+        log("%s CDP 实时抓取：%d 个分页响应 / %d 商品（去重前）" % (label, len(bodies), len(all_items)))
         return all_items
     except Exception as e:
-        log("20033 CDP 异常（跳过，仅离线种子兜底）：%s" % str(e)[:80])
+        log("%s CDP 异常（跳过，仅离线种子兜底）：%s" % (label, str(e)[:80]))
         return []
+
+
+def fetch_20033_cdp(log=_log):
+    """实时抓 20033 超级补贴活动页（union_page_id=20033）。"""
+    return _fetch_activity_cdp("20033", ACT_20033_URL, "20033", log=log)
+
+
+def fetch_21217_cdp(log=_log):
+    """实时抓「实时热销」活动页（union_page_id=21217，Boss 2026-11-17 并入京东好价）。"""
+    return _fetch_activity_cdp("21217", ACT_21217_URL, "实时热销", log=log)
+
+
+def load_offline_21217(log=_log):
+    """实时热销(21217)离线种子：jd20033_bodies/live21217_*.json（同 unionSearchRecommend 结构）。"""
+    import glob as _gl
+    raws = []
+    d = os.path.join(BASE_DIR, "jd20033_bodies")
+    for fn in sorted(_gl.glob(os.path.join(d, "live21217_*.json"))):
+        try:
+            txt = open(fn, encoding="utf-8").read()
+            for blk in (txt.split("\n\nURL: ") if "\n\nURL: " in txt else [txt]):
+                body = (blk.split("\n\n", 1)[1] if "\n\n" in blk else blk)
+                j = json.loads(body)
+                raws.extend(parse_20033_response(j))
+        except Exception:
+            pass
+    log("实时热销离线种子：%d 条（live21217）" % len(raws))
+    return raws
 
 
 def fetch_all(log=_log):
@@ -522,6 +559,7 @@ def to_item(it, link):
         "link": link,
         "sales30": it.get("volume") or 0,        # 月销量
         "rate": it.get("tkrate3") or 0,          # 佣金比例
+        "tags": it.get("tags") or [],            # 活动页标签（自营/超级补贴等；全站库为空）
         "_p": "jd",
     }
 
@@ -542,6 +580,29 @@ def run_once(log=_log, limit=None, dry=False, src20033=None):
     # 合并：jd2_ 主键不撞全站库 tao_id；写入时 20033 覆盖同名键（同款去重再裁决）
     merged = dict(raw)
     merged.update(raw20033)
+    # 实时热销(21217)并入（Boss 2026-11-17 18:50 明令）：与 20033 交叉去重 ——
+    # 同 skuId（jd2_ 同键）两活动都有时，留券后价更低的那份；21217 独有的直接进池。
+    try:
+        src21217 = (load_offline_21217(log) + (fetch_21217_cdp(log) or []))
+        raw21217 = build_20033_items(src21217, log, label="实时热销") if src21217 else {}
+        n_dup21217 = 0
+        for gid, it21217 in raw21217.items():
+            cur = merged.get(gid)
+            if cur is None:
+                merged[gid] = it21217
+                continue
+            n_dup21217 += 1
+            try:
+                p_new = float((it21217.get("purchasePriceInfo") or {}).get("purchasePrice") or 9e9)
+                p_cur = float((cur.get("purchasePriceInfo") or {}).get("purchasePrice") or 9e9)
+            except Exception:
+                continue
+            if p_new < p_cur:
+                merged[gid] = it21217
+        log("实时热销(21217)：建项 %d 条，与 20033 同款 %d 条（留券后价低），并入完成"
+            % (len(raw21217), n_dup21217))
+    except Exception as e:
+        log("实时热销(21217)并入异常（不影响本轮其余数据）：%s" % str(e)[:60])
     target = {g: it for g, it in merged.items() if qualifies(it)}
     if not target:
         log("本轮无命中商品，跳过（不清空，防误删）")

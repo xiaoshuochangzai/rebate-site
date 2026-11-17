@@ -1033,14 +1033,13 @@ def _jd_lp_price_ok(it):
 
 
 def _jd_lp_text(it):
-    """京东低价线报文案：标题 + 到手价/券额 + u.jd.com 链接（链接用什么就出什么，不改写）。"""
+    """京东好价线报文案：标题 + 到手价 + u.jd.com 链接（不改写）。
+    Boss 2026-11-16 17:15：直接给到手价不跟券额。
+    自营/超级补贴标签已升为消息开头（jd_lp_tick 里按 Boss 11-17 19:32 规则），文案不再重复。"""
     lines = [str(it.get("t") or "").strip()]
     price = str(it.get("price") or "").strip()
-    quan = str(it.get("quan") or "").strip()
-    # Boss 2026-11-16 17:15：京东低价线报直接给到手价，不跟「券X元」
-    seg = ("到手%s元" % price) if price else ""
-    if seg:
-        lines.append(seg)
+    if price:
+        lines.append("到手%s元" % price)
     link = str(it.get("link") or "").strip()
     if link:
         lines.append(link)
@@ -1085,39 +1084,27 @@ GOOD_RESCREEN_GAP = 3600   # Boss 11-17 明令：每发完一轮，间隔 1 小�
 
 
 def _good_batch(state, state_path, batch, items, log, label):
-    """筛→发→重筛循环的核心判定（京东/淘宝共用）：
-    返回本轮要发的一条 (gid, it)，或 None（本 tick 不发：批次空/冷却中/无货）。
-    state 结构：{batch_id, cursor, round_done_ts, rescreen_at}
-    - batch_id 变 → 新批次，游标归零
-    - cursor 走完一轮 → 标 round_done_ts
-    - 距 round_done_ts 满 1 小时 → 触发调用方重筛（由调用方判断），本 tick 先不发
+    """每天筛一次池 + 池内循环发（Boss 2026-11-17 19:28 明令，替换旧「发完一轮隔1h重筛」）：
+    - batch=筛选日（每天第一次 tick 由调用方触发重筛后传入今日日期）
+    - 游标走完一轮 → 归零循环继续发（允许重复），当天不再重筛
+    - batch 变（跨日新筛）→ 游标归零从新批次头开始
+    返回本轮要发的一条 (gid, it)，或 None（批次空/无货）。
     """
     now = time.time()
     bid = str(batch or "")
     st = state
     if st.get("batch_id") != bid:
-        st = {"batch_id": bid, "cursor": 0, "round_done_ts": 0, "rescreen_at": 0}
+        st = {"batch_id": bid, "cursor": 0}
     if not items:
         save_json(state_path, st)
         return None
     cursor = int(st.get("cursor") or 0)
-    done_ts = float(st.get("round_done_ts") or 0)
-    # 一轮发完：等 1 小时冷却，期间不发（重筛由调用方在冷却结束后触发）
     if cursor >= len(items):
-        if not done_ts:
-            st["round_done_ts"] = now
-            save_json(state_path, st)
-        return None
-    # 发下一条
-    if cursor >= len(items):
-        return None
-    idx = cursor
+        cursor = 0          # 一轮发完，归零循环（Boss 11-17：允许重复，池每天刷新一次）
+    it = items[cursor]
     st["cursor"] = cursor + 1
-    if st["cursor"] >= len(items):
-        st["round_done_ts"] = now
     save_json(state_path, st)
-    it = items[idx]
-    return (str(it.get("id") or idx), it)
+    return (str(it.get("id") or cursor), it)
 
 
 def jd_lp_tick(log=print):
@@ -1135,22 +1122,24 @@ def jd_lp_tick(log=print):
         return
     state_path = os.path.join(BASE_DIR, "jd_lp_round.json")
     st = load_json(state_path, {})
-    # 触发重筛的两种情形：①首次运行（无状态文件）②一轮发完且满 1 小时
-    done_ts = float(st.get("round_done_ts") or 0)
-    need_screen = (not st.get("batch_id")) or (done_ts and now - done_ts >= GOOD_RESCREEN_GAP)
+    today = time.strftime("%Y-%m-%d")
+    # Boss 11-17 19:28：每天刷新一次池（当天第一次 tick 触发重筛），池内循环发
+    need_screen = (st.get("batch_id") != today)
     if need_screen:
         try:
             import lowprice_jd_auto
             n = lowprice_jd_auto.rescreen(log=log)   # 带锁重筛，落盘 lowprice_jd.json
-            log(f"京东好价：{'首次运行' if not st.get('batch_id') else '一轮发完隔1h'}，已重筛（{n} 条）")
+            log(f"京东好价：每日刷新池（{today}，{n} 条）")
         except Exception as e:
-            log(f"京东好价重筛异常：{str(e)[:80]}")
+            log(f"京东好价每日刷新异常：{str(e)[:80]}")
+        st["batch_id"] = today          # 无论成败，今天只筛这一次
+        save_json(state_path, st)
     # 读本批成品 → 过滤（有链+≥10元）→ 判定发哪条
     try:
         data = load_json(JD_LP_FILE, {})
     except Exception:
         return
-    batch = str(data.get("batch_id") or data.get("ts") or "")
+    batch = today   # Boss 11-17 19:28：批次=筛选日，3h 镜像线程刷新文件不重置游标
     items = [x for x in (data.get("items") or [])
              if str(x.get("link") or "").strip() and "u.jd.com" in str(x.get("link"))
              and _jd_lp_price_ok(x)]
@@ -1164,7 +1153,16 @@ def jd_lp_tick(log=print):
     if not text:
         return
     _jd_lp_tail_cnt += 1
-    tagged = "【京东好价】" + text
+    # Boss 2026-11-17 19:32 明令：按活动页标签换开头——
+    # 超级补贴+自营 →【自营包邮】；仅超级补贴 →【包邮】；其余（含仅自营/无标签）→【京东好价】
+    _tags = set(str(x) for x in (it.get("tags") or []))
+    if "超级补贴" in _tags and "自营" in _tags:
+        tag = "【自营包邮】"
+    elif "超级补贴" in _tags:
+        tag = "【包邮】"
+    else:
+        tag = "【京东好价】"
+    tagged = tag + text
     tail = SELL2_TAIL if _jd_lp_tail_cnt % 2 == 0 else ""
     ok, msg = keyword_push._send(tagged + tail, log=log, ext_sync=False)
     if ok:
@@ -1174,7 +1172,7 @@ def jd_lp_tick(log=print):
             if _bump_sell2_tail() % SELL2_TAIL_EVERY == 0:
                 ext_text += SELL2_TAIL
             wecom_ext.enqueue(ext_text)
-        log(f"京东好价已发主群+外部群 {gid} | {str(it.get('t') or '')[:22]}（{msg}）")
+        log(f"{tag.strip('【】')}已发主群+外部群 {gid} | {str(it.get('t') or '')[:22]}（{msg}）")
 
 
 # ---- 淘宝低价好物发群（Boss 2026-11-16 明令）：三榜每日筛选，独立轮动池 ----
@@ -1232,22 +1230,24 @@ def tb_lp_daily_tick(log=print):
         return
     state_path = os.path.join(BASE_DIR, "tb_lp_round.json")
     st = load_json(state_path, {})
-    # 触发重筛的两种情形：①首次运行（无状态文件）②一轮发完且满 1 小时
-    done_ts = float(st.get("round_done_ts") or 0)
-    need_screen = (not st.get("batch_id")) or (done_ts and now - done_ts >= GOOD_RESCREEN_GAP)
+    today = time.strftime("%Y-%m-%d")
+    # Boss 11-17 19:28：每天刷新一次池（当天第一次 tick 触发重筛），池内循环发
+    need_screen = (st.get("batch_id") != today)
     if need_screen:
         try:
             import lowprice_auto
             n = lowprice_auto.run_daily(log=log)
-            log(f"淘宝好价：{'首次运行' if not st.get('batch_id') else '一轮发完隔1h'}，已重筛（{n} 条）")
+            log(f"淘宝好价：每日刷新池（{today}，{n} 条）")
         except Exception as e:
-            log(f"淘宝好价重筛异常：{str(e)[:80]}")
+            log(f"淘宝好价每日刷新异常：{str(e)[:80]}")
+        st["batch_id"] = today          # 无论成败，今天只筛这一次
+        save_json(state_path, st)
     # 读本批成品 → 有淘口令 → 判定发哪条（淘宝不过滤价格）
     try:
         daily = load_json(TB_LP_DAILY_FILE, {})
     except Exception:
         return
-    batch = str(daily.get("batch_id") or daily.get("ts") or "")
+    batch = today   # 批次=筛选日（同京东口径）
     items = [x for x in (daily.get("items") or [])
              if str((x.get("tpwd") or "")).strip()]
     if not items:
