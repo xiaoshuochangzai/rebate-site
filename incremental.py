@@ -1083,12 +1083,12 @@ def jd_lp_register(log=print):
 GOOD_RESCREEN_GAP = 3600   # Boss 11-17 明令：每发完一轮，间隔 1 小时才重筛下一批
 
 
-def _good_batch(state, state_path, batch, items, log, label):
-    """每天筛一次池 + 池内循环发（Boss 2026-11-17 19:28 明令，替换旧「发完一轮隔1h重筛」）：
+def _good_batch(state, state_path, batch, items, log, label, rest_sec=0):
+    """每天筛一次池 + 池内循环发（Boss 2026-11-17 19:28 明令）：
     - batch=筛选日（每天第一次 tick 由调用方触发重筛后传入今日日期）
     - 游标走完一轮 → 归零循环继续发（允许重复），当天不再重筛
-    - batch 变（跨日新筛）→ 游标归零从新批次头开始
-    返回本轮要发的一条 (gid, it)，或 None（批次空/无货）。
+    - rest_sec>0 时（Boss 11-18 09:50：淘宝 3600）：一轮发完后轮间休息 rest_sec 秒再继续
+    返回本轮要发的一条 (gid, it)，或 None（批次空/轮间休息中/无货）。
     """
     now = time.time()
     bid = str(batch or "")
@@ -1100,9 +1100,18 @@ def _good_batch(state, state_path, batch, items, log, label):
         return None
     cursor = int(st.get("cursor") or 0)
     if cursor >= len(items):
-        cursor = 0          # 一轮发完，归零循环（Boss 11-17：允许重复，池每天刷新一次）
+        # 一轮发完：有轮间休息则先歇够再归零（Boss 11-18：淘宝停 1 小时）
+        done_ts = float(st.get("round_done_ts") or 0)
+        if rest_sec > 0 and now - done_ts < rest_sec:
+            return None
+        st["cursor"] = 0
+        st.pop("round_done_ts", None)
+        save_json(state_path, st)
+        cursor = 0
     it = items[cursor]
     st["cursor"] = cursor + 1
+    if st["cursor"] >= len(items):
+        st["round_done_ts"] = now    # 本轮最后一条发出时刻（轮间休息计时起点）
     save_json(state_path, st)
     return (str(it.get("id") or cursor), it)
 
@@ -1252,7 +1261,7 @@ def tb_lp_daily_tick(log=print):
              if str((x.get("tpwd") or "")).strip()]
     if not items:
         return
-    got = _good_batch(st, state_path, batch, items, log, "淘宝好价")
+    got = _good_batch(st, state_path, batch, items, log, "淘宝好价", rest_sec=3600)
     if not got:
         return
     gid, it = got
