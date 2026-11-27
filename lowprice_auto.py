@@ -234,6 +234,14 @@ def run_daily(log=_log, force=False):
             "batch_id": batch_id, "total": len(items), "items": items}
     try:
         json.dump(data, open(DAILY_PATH, "w", encoding="utf-8"), ensure_ascii=False)
+        # Boss 2026-11-18 16:24：每日池存档（供跨日对比新增/消失），按日期永久保留
+        try:
+            adir = os.path.join(BASE_DIR, "lp_daily_archive")
+            os.makedirs(adir, exist_ok=True)
+            json.dump(data, open(os.path.join(adir, "%s.json" % today), "w", encoding="utf-8"),
+                      ensure_ascii=False)
+        except Exception as e:
+            log(f"每日池存档失败（不影响主文件）：{str(e)[:50]}")
         log(f"每日筛选落盘 {DAILY_PATH}：{len(items)} 条（批次 {batch_id}，新转 {n_new} / 失败 {n_fail}）")
         return len(items)
     except Exception as e:

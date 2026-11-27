@@ -1003,7 +1003,7 @@ def mc_refill_tick(log=print):
 # 口径：标签【京东好价】、链接直接用 u.jd.com、站尾每 2 条一次、守夜闸+红包静默。
 JD_LP_FILE = os.path.join(BASE_DIR, "site", "lowprice_jd.json")   # 数据源：现成成品库
 JD_LP_POOL_FILE = os.path.join(BASE_DIR, "jd_lp_pool.json")       # 独立轮动池（与淘宝池隔离）
-JD_LP_INTERVAL_SEC = 60         # 每 1 分钟 1 条（与淘宝 mc_refill_tick 同节奏）
+JD_LP_INTERVAL_SEC = 120        # Boss 11-20：每 2 分钟 1 条（原 1 分钟）
 JD_LP_MIN_PRICE = 10.0          # Boss 2026-11-16 明令：到手价 <10 元的不发群（网站照常展示，仅推送侧过滤）
 # 「最久没发优先 + ts 落盘」天然轮询：一条发完要等其余 281 条都发过（约 4.7 小时）
 # 才会再轮到，无需长冷却（长冷却反而会卡住：282 条 4.7h 发完一轮，6h 冷却会停摆 1.3h）。
@@ -1084,36 +1084,52 @@ GOOD_RESCREEN_GAP = 3600   # Boss 11-17 明令：每发完一轮，间隔 1 小�
 
 
 def _good_batch(state, state_path, batch, items, log, label, rest_sec=0):
-    """每天筛一次池 + 池内循环发（Boss 2026-11-17 19:28 明令）：
-    - batch=筛选日（每天第一次 tick 由调用方触发重筛后传入今日日期）
-    - 游标走完一轮 → 归零循环继续发（允许重复），当天不再重筛
-    - rest_sec>0 时（Boss 11-18 09:50：淘宝 3600）：一轮发完后轮间休息 rest_sec 秒再继续
-    返回本轮要发的一条 (gid, it)，或 None（批次空/轮间休息中/无货）。
+    """当天全量轮 → 增量轮 → 18点全量轮（Boss 2026-11-23 19:46 明令，两平台一致）：
+    - 跨天（batch 变）→ 从全量重新开始，sent_ids 清空（仅限当天，不对比昨天存档）
+    - full 阶段：把池里全部发一遍（未发过的都发）→ 发完切 new
+    - new 阶段：只发「当天还没发过」的（=新进池的），发完歇够再查有没有新的
+    - 18:00（本地时间）→ 强制切回 full、sent_ids 清空，全部重发（当天只触发一次）
+    - 每阶段发完休息 rest_sec 秒（Boss 11-20：京东淘宝均 3600）
+    - 增量判断=当天已发 id 集合去重，天然「只发新进池」，跨天自动失效
+    返回本轮要发的一条 (gid, it)，或 None（轮间休息中/无货）。
     """
     now = time.time()
     bid = str(batch or "")
     st = state
     if st.get("batch_id") != bid:
-        st = {"batch_id": bid, "cursor": 0}
+        st = {"batch_id": bid, "phase": "full", "sent_ids": [],
+              "round_done_ts": 0, "full18_done": False}
+    # 18点强制全量轮（当天仅一次；若启动即过18点也会立即触发）
+    if not st.get("full18_done") and time.localtime(now).tm_hour >= 18:
+        st["phase"] = "full"
+        st["sent_ids"] = []
+        st["round_done_ts"] = 0
+        st["full18_done"] = True
     if not items:
         save_json(state_path, st)
         return None
-    cursor = int(st.get("cursor") or 0)
-    if cursor >= len(items):
-        # 一轮发完：有轮间休息则先歇够再归零（Boss 11-18：淘宝停 1 小时）
-        done_ts = float(st.get("round_done_ts") or 0)
-        if rest_sec > 0 and now - done_ts < rest_sec:
-            return None
-        st["cursor"] = 0
-        st.pop("round_done_ts", None)
+    # 上一阶段发完未满 rest_sec → 轮间休息，不发
+    done_ts = float(st.get("round_done_ts") or 0)
+    if done_ts and now - done_ts < rest_sec:
+        return None
+    if done_ts:
+        st["round_done_ts"] = 0   # 休息够，清标记
+    sent = set(str(x) for x in (st.get("sent_ids") or []))
+    def _gid(it):
+        return str(it.get("id") or "")
+    candidates = [x for x in items if _gid(x) not in sent]
+    if not candidates:
+        # 本阶段全部发完：full→new；new 保持 new（等新货进池）
+        if st.get("phase") == "full":
+            st["phase"] = "new"
+        st["round_done_ts"] = now
         save_json(state_path, st)
-        cursor = 0
-    it = items[cursor]
-    st["cursor"] = cursor + 1
-    if st["cursor"] >= len(items):
-        st["round_done_ts"] = now    # 本轮最后一条发出时刻（轮间休息计时起点）
+        return None
+    it = candidates[0]
+    sent.add(_gid(it))
+    st["sent_ids"] = sorted(sent)
     save_json(state_path, st)
-    return (str(it.get("id") or cursor), it)
+    return (_gid(it), it)
 
 
 def jd_lp_tick(log=print):
@@ -1154,7 +1170,7 @@ def jd_lp_tick(log=print):
              and _jd_lp_price_ok(x)]
     if not items:
         return
-    got = _good_batch(st, state_path, batch, items, log, "京东好价")
+    got = _good_batch(st, state_path, batch, items, log, "京东好价", rest_sec=3600)
     if not got:
         return
     gid, it = got
@@ -1190,7 +1206,7 @@ def jd_lp_tick(log=print):
 #  与网站 lowprice.json 的佣金率>10% 两把尺；不碰历史共享池 tb_refill_mc.json）。
 TB_LP_DAILY_FILE = os.path.join(BASE_DIR, "site", "lp_daily.json")
 TB_LP_POOL_FILE = os.path.join(BASE_DIR, "tb_lp_daily_pool.json")
-TB_LP_INTERVAL_SEC = 60         # 每分钟 1 条（与京东低价/猫超轮播同节奏）
+TB_LP_INTERVAL_SEC = 120        # Boss 11-20：每 2 分钟 1 条（原 1 分钟）
 TB_LP_COOLDOWN_SEC = 30 * 60    # 安全垫（最久没发优先天然轮询，无需长冷却）
 _tb_lp_cache = None
 _tb_lp_last = 0.0

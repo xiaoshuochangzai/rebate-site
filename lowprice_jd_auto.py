@@ -35,9 +35,15 @@ API_JINGFEN = API_BASE + "open_jing_union_open_goods_jingfen_query.ashx"
 CHANNEL_ID = 41        # 20032 页面「自营热卖榜」对应折京客京粉精选频道 eliteId=41
 SPLIT_PRICE = 20.0     # Boss 2026-11-12：低价组 <20 元 / 高价组 >=20 元
 MAX_PRICE = 60.0
-MIN_PRICE = 3.0         # Boss 2026-11-12 明令：券后价 >=3 元（0.01/1元 那种凑单例剔除）
-MIN_RATE = 10.0
-MIN_SALES = 1000
+MIN_PRICE = 3.0         # 活动页(20033/21217)价格带 3-60（Boss 11-20 不变）
+# 折京客全站库独立价格带（Boss 2026-11-20 12:59：9.9≤价≤100，与活动页分开）
+ZTK_MIN_PRICE = 9.9
+ZTK_MAX_PRICE = 100.0
+MIN_RATE = 15.0         # Boss 2026-11-20：折京客佣金率 10→15%
+MIN_SALES = 500         # Boss 11-20 12:59：折京客月销 1000→500（试算 9.9-100+佣15+销500=119条）
+ACT_20033_MIN_SALES = 300    # Boss 11-20：20033 超级补贴 销量≥300（佣金率数据缺失，暂不卡）
+ACT_21217_MIN_SALES = 1000   # Boss 11-20：21217 实时热销 销量≥1000（佣金率数据缺失，暂不卡）
+USE_ACTIVITY_PAGES = False   # Boss 2026-11-26 明令：活动页源（20033/21217）整体停用，只留折京客全站库
 PAGE_SIZE = 50
 MAX_PAGES = 60
 LOOP_SEC = 3 * 3600   # Boss 2026-11-12 明令：每 3 小时全量覆盖一次（原 10 分钟；epoch 对齐→北京 8/11/14/17/20/23 点整）
@@ -245,7 +251,7 @@ def _best_coupon(it):
     return best
 
 
-def build_20033_items(raw_list, log=_log, label="20033"):
+def build_20033_items(raw_list, log=_log, label="20033", src="20033"):
     """把 unionSearchRecommend 原始商品映射成与 api_all 同形 dict。
     破价品（无可用券）跳过；tao_id 用 jd2_ 前缀避免与 api_all 的 tao_id 碰撞。"""
     out, n_skip = {}, 0
@@ -276,7 +282,7 @@ def build_20033_items(raw_list, log=_log, label="20033"):
             "coupon_end_time": end,
             "pict_url": img,
             "size": float((it.get("purchasePriceInfo") or {}).get("thresholdPrice") or it.get("wlPrice") or 0),
-            "_src": "20033",
+            "_src": src,             # 20033 超级补贴 / 21217 实时热销（Boss 11-20 分源卡销量）
             "tags": tags,            # 例：["自营","超级补贴","同类超低价","7天无理由退货"]
         }
     log("%s 建项：可用券商品 %d 条，破价/无券跳过 %d 条" % (label, len(out), n_skip))
@@ -442,8 +448,8 @@ def load_offline_21217(log=_log):
 def fetch_all(log=_log):
     """Boss 2026-11-12 15:14 明令：撤三榜单组合，只用全站领券商品库。
     三条件一次筛：券后 3~60 元 + 佣金≥10% + 月销量≥1000（参数直接下推）。"""
-    return fetch_api_all({"price": "3.0-60", "commission_rate_start": 10,
-                          "sale_num_start": 1000}, "全站领券商品库", log)
+    return fetch_api_all({"price": "9.9-100", "commission_rate_start": 15,
+                          "sale_num_start": 500}, "全站领券商品库", log)
 
 
 def interleave(items, log=_log, shuffle=True):
@@ -498,14 +504,20 @@ def qualifies(it):
         price = float(it.get("quanhou_jiage") or 0)
     except Exception:
         return False
-    # 20033 券商品：Boss 明令只卡价 3~60 + 券未过期，不卡佣金/销量（活动精选本就优质）
-    if it.get("_src") == "20033":
-        if not (MIN_PRICE <= price <= MAX_PRICE):
+    # 活动页券商品（Boss 2026-11-20 分源口径）：
+    # - 活动页响应无佣金率字段（inOrderComm30Days 是全渠道累计值，不能换算），暂只卡销量
+    # - 20033 超级补贴 销量≥300；21217 实时热销 销量≥1000
+    src = str(it.get("_src") or "")
+    if src in ("20033", "21217"):
+        sales = float(it.get("volume") or 0)
+        floor = ACT_20033_MIN_SALES if src == "20033" else ACT_21217_MIN_SALES
+        if not (MIN_PRICE <= price <= MAX_PRICE and sales >= floor):
             return False
     else:
+        # 折京客全站库（Boss 11-20 12:59）：券后 9.9~100 + 佣金率≥15% + 月销≥500
         rate = float(it.get("tkrate3") or 0)
         sales = float(it.get("volume") or 0)
-        if not (MIN_PRICE <= price <= MAX_PRICE and rate >= MIN_RATE and sales >= MIN_SALES):
+        if not (ZTK_MIN_PRICE <= price <= ZTK_MAX_PRICE and rate >= MIN_RATE and sales >= MIN_SALES):
             return False
     # 券已过期的不上站（dadongke 旧券教训）
     end = str(it.get("coupon_end_time") or "").strip()
@@ -571,38 +583,44 @@ def run_once(log=_log, limit=None, dry=False, src20033=None):
         return -1
     # 20033 券商品（活动精选，主推）。
     # 实时通道（浏览器已登录 jingfen 会话）拿全量最新；离线种子（jd20033_bodies）
-    # 保证即使登录墙拦截/无浏览器也永远有货。两者按 skuId 合并，实时覆盖离线。
-    if src20033 is None:
-        live = fetch_20033_cdp(log)
-        offline = load_offline_20033(log)
-        src20033 = offline + (live or [])
-    raw20033 = build_20033_items(src20033, log) if src20033 else {}
-    # 合并：jd2_ 主键不撞全站库 tao_id；写入时 20033 覆盖同名键（同款去重再裁决）
-    merged = dict(raw)
-    merged.update(raw20033)
-    # 实时热销(21217)并入（Boss 2026-11-17 18:50 明令）：与 20033 交叉去重 ——
-    # 同 skuId（jd2_ 同键）两活动都有时，留券后价更低的那份；21217 独有的直接进池。
-    try:
-        src21217 = (load_offline_21217(log) + (fetch_21217_cdp(log) or []))
-        raw21217 = build_20033_items(src21217, log, label="实时热销") if src21217 else {}
-        n_dup21217 = 0
-        for gid, it21217 in raw21217.items():
-            cur = merged.get(gid)
-            if cur is None:
-                merged[gid] = it21217
-                continue
-            n_dup21217 += 1
-            try:
-                p_new = float((it21217.get("purchasePriceInfo") or {}).get("purchasePrice") or 9e9)
-                p_cur = float((cur.get("purchasePriceInfo") or {}).get("purchasePrice") or 9e9)
-            except Exception:
-                continue
-            if p_new < p_cur:
-                merged[gid] = it21217
-        log("实时热销(21217)：建项 %d 条，与 20033 同款 %d 条（留券后价低），并入完成"
-            % (len(raw21217), n_dup21217))
-    except Exception as e:
-        log("实时热销(21217)并入异常（不影响本轮其余数据）：%s" % str(e)[:60])
+    # Boss 2026-11-26 15:08 明令：取消 20033 超级补贴与 21217 实时热销两个活动页源，
+    # 京东好价池只保留折京客全站库（价9.9-100 + 佣金率≥15% + 月销≥500）。
+    # 活动页抓取/建项/并入逻辑整体停用（函数保留，日后要恢复直接打开 USE_ACTIVITY 开关）。
+    if USE_ACTIVITY_PAGES:
+        if src20033 is None:
+            live = fetch_20033_cdp(log)
+            offline = load_offline_20033(log)
+            src20033 = offline + (live or [])
+        raw20033 = build_20033_items(src20033, log) if src20033 else {}
+        # 合并：jd2_ 主键不撞全站库 tao_id；写入时 20033 覆盖同名键（同款去重再裁决）
+        merged = dict(raw)
+        merged.update(raw20033)
+        # 实时热销(21217)并入（Boss 2026-11-17 18:50 明令）：与 20033 交叉去重 ——
+        # 同 skuId（jd2_ 同键）两活动都有时，留券后价更低的那份；21217 独有的直接进池。
+        try:
+            src21217 = (load_offline_21217(log) + (fetch_21217_cdp(log) or []))
+            raw21217 = build_20033_items(src21217, log, label="实时热销", src="21217") if src21217 else {}
+            n_dup21217 = 0
+            for gid, it21217 in raw21217.items():
+                cur = merged.get(gid)
+                if cur is None:
+                    merged[gid] = it21217
+                    continue
+                n_dup21217 += 1
+                try:
+                    p_new = float((it21217.get("purchasePriceInfo") or {}).get("purchasePrice") or 9e9)
+                    p_cur = float((cur.get("purchasePriceInfo") or {}).get("purchasePrice") or 9e9)
+                except Exception:
+                    continue
+                if p_new < p_cur:
+                    merged[gid] = it21217
+            log("实时热销(21217)：建项 %d 条，与 20033 同款 %d 条（留券后价低），并入完成"
+                % (len(raw21217), n_dup21217))
+        except Exception as e:
+            log("实时热销(21217)并入异常（不影响本轮其余数据）：%s" % str(e)[:60])
+    else:
+        merged = dict(raw)
+        log("活动页源已停用（Boss 11-26）：本轮仅折京客全站库，原始 %d 条" % len(merged))
     target = {g: it for g, it in merged.items() if qualifies(it)}
     if not target:
         log("本轮无命中商品，跳过（不清空，防误删）")
@@ -617,11 +635,11 @@ def run_once(log=_log, limit=None, dry=False, src20033=None):
         except Exception:
             p = 0.0
         cur = best.get(k)
-        if cur is None or p < cur[2] - 1e-9 or (abs(p - cur[2]) < 1e-9 and it.get("_src") == "20033"):
+        if cur is None or p < cur[2] - 1e-9 or (abs(p - cur[2]) < 1e-9 and str(it.get("_src") or "") in ("20033", "21217")):
             best[k] = (gid, it, p)
     n_dup = len(target) - len(best)
     target = {gid: it for gid, it, _p in best.values()}
-    log("同款归一：合并 %d 条变体（含 20033 %d 条），剩 %d 条" % (n_dup, len(raw20033), len(target)))
+    log("同款归一：合并 %d 条变体，剩 %d 条（活动页源已停用，仅折京客）" % (n_dup, len(target)))
     cache = _load(CACHE, {})
     old_items = {str(x.get("id")): x for x in (_load(OUT, {}).get("items") or [])}
     ordered = sorted(target.items(), key=lambda kv: float(kv[1].get("volume") or 0), reverse=True)
@@ -655,6 +673,13 @@ def run_once(log=_log, limit=None, dry=False, src20033=None):
     out_items = interleave(out_items, log)
     obj = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "total": len(out_items), "items": out_items}
     _save(OUT, obj)
+    # Boss 2026-11-18 16:24：每日池存档（供跨日对比新增/消失），按日期命名、同日最后一轮覆盖=当日最终池
+    try:
+        adir = os.path.join(BASE_DIR, "lp_daily_archive")
+        os.makedirs(adir, exist_ok=True)
+        _save(os.path.join(adir, "jd_%s.json" % time.strftime("%Y-%m-%d")), obj)
+    except Exception as e:
+        log("京东池存档失败（不影响主文件）：%s" % str(e)[:50])
     for g in list(cache):
         if g not in target:
             cache.pop(g, None)
